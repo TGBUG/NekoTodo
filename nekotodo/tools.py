@@ -7,7 +7,8 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nekotodo.models import SourceInfo, SourceItem, Task
+from nekotodo.models import SourceImage, SourceInfo, SourceItem, Task
+from nekotodo.storage import get_storage
 
 _UNSET = object()
 
@@ -31,7 +32,8 @@ def task_to_dict(task: Task) -> dict[str, Any]:
     return {
         "id": task.id,
         "description": task.description,
-        "progress": task.progress,
+        "status": task.status,
+        "details": task.details,
         "deadline": task.deadline.isoformat() if task.deadline else None,
         "priority": task.priority,
         "category": task.category,
@@ -53,6 +55,17 @@ def source_item_to_dict(item: SourceItem) -> dict[str, Any]:
         "id": item.id,
         "source_info_id": item.source_info_id,
         "content": item.content,
+        "source_image_id": item.source_image_id,
+    }
+
+
+def source_image_to_dict(image: SourceImage) -> dict[str, Any]:
+    return {
+        "id": image.id,
+        "source_info_id": image.source_info_id,
+        "file_uuid": image.file_uuid,
+        "size": image.size,
+        "description": image.description,
     }
 
 
@@ -85,7 +98,7 @@ async def list_tasks(
     if source_item_id is not None:
         stmt = stmt.where(Task.source_item_id == source_item_id)
     if completed_only:
-        stmt = stmt.where(Task.progress == 100)
+        stmt = stmt.where(Task.status == "completed")
     stmt = stmt.order_by(Task.priority)
     result = await session.execute(stmt)
     return list(result.scalars().all())
@@ -132,7 +145,8 @@ async def update_task(
     task_id: int,
     *,
     description: Any = _UNSET,
-    progress: Any = _UNSET,
+    status: Any = _UNSET,
+    details: Any = _UNSET,
     deadline: Any = _UNSET,
     category: Any = _UNSET,
 ) -> Task | None:
@@ -143,11 +157,12 @@ async def update_task(
         if not description or not str(description).strip():
             raise ValueError("description must not be empty")
         task.description = str(description)
-    if progress is not _UNSET:
-        progress_int = int(progress)
-        if not 0 <= progress_int <= 100:
-            raise ValueError("progress must be between 0 and 100")
-        task.progress = progress_int
+    if status is not _UNSET:
+        if status not in ("incomplete", "completed"):
+            raise ValueError("status must be 'incomplete' or 'completed'")
+        task.status = status
+    if details is not _UNSET:
+        task.details = details or ""
     if deadline is not _UNSET:
         task.deadline = deadline  # None clears it
     if category is not _UNSET:
@@ -241,8 +256,8 @@ async def list_source_infos(session: AsyncSession, user_id: int) -> list[SourceI
 async def create_source_info(
     session: AsyncSession, user_id: int, content: str
 ) -> SourceInfo:
-    if not content or not content.strip():
-        raise ValueError("content must not be empty")
+    # content may be empty for pure-image submissions; the API enforces
+    # "content or at least one file".
     source_info = SourceInfo(user_id=user_id, content=content)
     session.add(source_info)
     await session.flush()
@@ -250,17 +265,56 @@ async def create_source_info(
 
 
 async def create_source_item(
-    session: AsyncSession, user_id: int, source_info_id: int, content: str
+    session: AsyncSession,
+    user_id: int,
+    source_info_id: int,
+    content: str,
+    *,
+    source_image_id: int | None = None,
 ) -> SourceItem | None:
     source_info = await get_source_info(session, user_id, source_info_id)
     if source_info is None:
         return None
     if not content or not content.strip():
         raise ValueError("source item content must not be empty")
-    item = SourceItem(source_info_id=source_info_id, user_id=user_id, content=content)
+    item = SourceItem(
+        source_info_id=source_info_id,
+        user_id=user_id,
+        content=content,
+        source_image_id=source_image_id,
+    )
     session.add(item)
     await session.flush()
     return item
+
+
+async def create_source_image(
+    session: AsyncSession,
+    user_id: int,
+    source_info_id: int,
+    file_uuid: str,
+    size: int,
+) -> SourceImage | None:
+    source_info = await get_source_info(session, user_id, source_info_id)
+    if source_info is None:
+        return None
+    image = SourceImage(
+        source_info_id=source_info_id, user_id=user_id, file_uuid=file_uuid, size=size
+    )
+    session.add(image)
+    await session.flush()
+    return image
+
+
+async def list_source_images(
+    session: AsyncSession, user_id: int, source_info_id: int
+) -> list[SourceImage]:
+    result = await session.execute(
+        select(SourceImage)
+        .where(SourceImage.source_info_id == source_info_id, SourceImage.user_id == user_id)
+        .order_by(SourceImage.id)
+    )
+    return list(result.scalars().all())
 
 
 async def list_source_items(
@@ -298,25 +352,43 @@ async def _count_referencing_tasks(session: AsyncSession, source_item_ids: list[
     return int(result.scalar_one())
 
 
+async def _collect_image_files(session: AsyncSession, source_info_id: int) -> list[tuple[int, str]]:
+    result = await session.execute(
+        select(SourceImage.user_id, SourceImage.file_uuid).where(
+            SourceImage.source_info_id == source_info_id
+        )
+    )
+    return [(row[0], row[1]) for row in result]
+
+
+def _delete_files(files: list[tuple[int, str]]) -> None:
+    for user_id, file_uuid in files:
+        get_storage().delete(user_id, file_uuid)
+
+
 async def _delete_orphaned_source_info(session: AsyncSession, source_info_id: int) -> None:
     result = await session.execute(
         select(SourceItem.id).where(SourceItem.source_info_id == source_info_id)
     )
     item_ids = [row[0] for row in result]
     if await _count_referencing_tasks(session, item_ids) == 0:
+        files = await _collect_image_files(session, source_info_id)
         await session.execute(sa_delete(SourceInfo).where(SourceInfo.id == source_info_id))
+        _delete_files(files)
 
 
 async def delete_source_info(session: AsyncSession, user_id: int, source_info_id: int) -> bool:
     source_info = await get_source_info(session, user_id, source_info_id)
     if source_info is None:
         return False
+    files = await _collect_image_files(session, source_info_id)
     result = await session.execute(
         select(SourceItem.id).where(SourceItem.source_info_id == source_info_id)
     )
     item_ids = [row[0] for row in result]
     if item_ids:
         await session.execute(sa_delete(Task).where(Task.source_item_id.in_(item_ids)))
-    await session.delete(source_info)  # ORM cascade removes SourceItems
+    await session.delete(source_info)  # ORM cascade removes SourceItems + SourceImages
     await _renormalize_priorities(session, user_id)
+    _delete_files(files)
     return True

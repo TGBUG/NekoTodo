@@ -63,10 +63,12 @@ NEKOTODO_CONFIG=config.toml uvicorn nekotodo.app:app
 | --- | --- | --- |
 | `[server]` | `host` / `port` | 监听地址与端口 |
 | `[database]` | `path` | SQLite 文件路径 |
+| `[files]` | `dir` | 上传文件存储目录,按用户分目录、UUID 文件名 |
 | `[auth]` | `jwt_secret` / `algorithm` | JWT 签名密钥(必填)与算法 |
-| `[ai]` | `base_url` / `api_key` / `model` | OpenAI 兼容端点、密钥、模型 |
-| `[ai]` | `timeout_seconds` / `max_iterations` | 单次请求超时 / Agent 循环最大轮数 |
-| `[prompt]` | `default_template` | 默认拆解提示词;留空使用内置模板 |
+| `[llm]` | `base_url` / `api_key` / `model` | 语言大模型(拆解循环),OpenAI 兼容端点 |
+| `[llm]` | `timeout_seconds` / `max_iterations` | 单次请求超时 / Agent 循环最大轮数 |
+| `[vlm]` | `base_url` / `api_key` / `model` | 视觉模型(图片预处理);允许留空,留空时提交图片将返回 400 |
+| `[prompt]` | `default_template` | 拆解系统提示词模板,支持占位符;留空使用内置模板 |
 | `[registration]` | `allow_public` / `require_turnstile` | 是否开放公开注册;是否要求 Cloudflare Turnstile 验证 |
 | `[registration]` | `turnstile_site_key` / `turnstile_secret_key` | Turnstile 站点与密钥 |
 | `[runs]` | `retention_days` | 拆解运行记录保留窗口(天) |
@@ -75,9 +77,12 @@ NEKOTODO_CONFIG=config.toml uvicorn nekotodo.app:app
 
 ```bash
 NEKOTODO_AUTH__JWT_SECRET=...
-NEKOTODO_AI__API_KEY=...
+NEKOTODO_LLM__API_KEY=...
+NEKOTODO_VLM__API_KEY=...
 NEKOTODO_REGISTRATION__TURNSTILE_SECRET_KEY=...
 ```
+
+提示词模板占位符:`{source_info_id}` 源信息 id / `{source_content}` 源信息文本 / `{source_items}` 已有条目 / `{images}` VLM 提取的图片描述 / `{current_time}` 当前用户本地时间 / `{timezone}` 用户时区。用户自定义模板可自由摆放;模板里没有的占位符数据不会注入(不自动追加)。
 
 ## 命令行工具
 
@@ -102,10 +107,11 @@ NEKOTODO_REGISTRATION__TURNSTILE_SECRET_KEY=...
 
 | 概念 | 说明 |
 | --- | --- |
-| `Task` 任务 | `description` / `progress`(0-100,**100 即完成**,无独立状态字段)/ `deadline?`(UTC)/ `priority` / `category?` / `source_item_id?` |
+| `Task` 任务 | `description` / `status`(`incomplete`\|`completed`)/ `details`(自由文本,描述更细的进度)/ `deadline?`(UTC)/ `priority` / `category?` / `source_item_id?` |
 | `priority` | 用户在列表中的**位置序位**:1 为最顶(最急),取值范围 1..当前任务总数,无并列无空位;插入/移动/删除会带动其他任务移位 |
-| `SourceInfo` 源信息 | 用户单次提交的原始信息(如作业清单);要求(截止时间、分类偏好等)内嵌在内容中,不单独存储 |
-| `SourceItem` 来源条目 | 源信息内的一条;Task 通过 `source_item_id` 指向它(多对一) |
+| `SourceInfo` 源信息 | 用户单次提交的原始信息(如作业清单);要求内嵌在内容中;可附带多张图片(`source_images`) |
+| `SourceImage` 来源图片 | 随源信息上传的图片,存于 `[files].dir`,由 VLM 预处理为文字描述后供拆解 |
+| `SourceItem` 来源条目 | 源信息内的一条;Task 通过 `source_item_id` 指向它(多对一);可选 `source_image_id` 溯源到某张图片 |
 | `DecompositionRun` 拆解运行 | 一次异步拆解,`pending → running → completed/failed`,返回 UUID 供轮询 |
 
 ### 鉴权
@@ -223,7 +229,8 @@ Task 对象:
 {
   "id": 1,
   "description": "买牛奶",
-  "progress": 0,
+  "status": "incomplete",
+  "details": "",
   "deadline": null,
   "priority": 1,
   "category": "生活",
@@ -239,7 +246,7 @@ Task 对象:
 | --- | --- | --- |
 | `category` | string | 按分类过滤 |
 | `source_item_id` | integer | 按来源条目过滤 |
-| `completed` | boolean | `true` 只返回已完成(progress=100) |
+| `completed` | boolean | `true` 只返回已完成(status=completed) |
 
 返回:`[Task, ...]`,按 `priority` 升序。
 
@@ -269,13 +276,14 @@ Task 对象:
 ```json
 {
   "description": "买牛奶和鸡蛋",
-  "progress": 50,             // 0-100
+  "status": "completed",      // incomplete | completed
+  "details": "已买牛奶,还差鸡蛋",
   "deadline": "2026-08-12T00:00:00Z",
   "category": "生活"
 }
 ```
 
-返回:更新后的 `Task`。错误:`400` progress 越界或描述为空;`404` 不存在。
+返回:更新后的 `Task`。错误:`400` status 非法或描述为空;`404` 不存在。
 
 > 调整顺序请用 `move`,此处不含 `priority`。
 
@@ -314,17 +322,24 @@ SourceInfo 对象:
 }
 ```
 
-#### POST `/source-infos` — 提交源信息(需鉴权)
+#### POST `/source-infos` — 提交源信息并拆解(需鉴权)
 
-请求体:
+提交源信息后**立即开始异步拆解**,返回 `run_id` 供轮询。请求体为 **multipart/form-data**:
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `content` | text | 源信息文本(选填,要求内嵌其中) |
+| `files` | file(可多个) | 图片文件(选填;当前仅支持 png/jpeg/webp/gif) |
+
+`content` 与 `files` 至少提供其一。提交图片需要已配置 `[vlm]`,否则返回 400;图片由 VLM 预处理为文字描述后参与拆解。
+
+返回:
 
 ```json
-{
-  "content": "寒假作业清单:语文:abcd,数学:efgh,要在8月14日前做完"   // 必填,原始内容(要求内嵌其中)
-}
+{ "source_info_id": 1, "run_id": "c90ce119-5baa-4f0c-a219-2a566cdcac9e" }
 ```
 
-返回:新建的 `SourceInfo`。错误:`400` 内容为空。
+错误:`400` 内容与文件均缺失 / 文件类型不支持 / VLM 未配置。
 
 #### GET `/source-infos`(需鉴权)
 
@@ -332,7 +347,7 @@ SourceInfo 对象:
 
 #### GET `/source-infos/{source_info_id}`(需鉴权)
 
-返回:`SourceInfo` 对象,附加两个字段:
+返回:`SourceInfo` 对象,附加来源条目、任务与图片列表:
 
 ```json
 {
@@ -340,14 +355,17 @@ SourceInfo 对象:
   "content": "...",
   "created_at": "...",
   "updated_at": "...",
-  "source_items": [ { "id": 1, "source_info_id": 1, "content": "语文:abcd" } ],
-  "tasks": [ /* Task 数组,该源信息拆出的全部任务 */ ]
+  "source_items": [ { "id": 1, "source_info_id": 1, "content": "语文:abcd", "source_image_id": null } ],
+  "tasks": [ /* Task 数组,该源信息拆出的全部任务 */ ],
+  "source_images": [ { "id": 1, "source_info_id": 1, "file_uuid": "3f2a...", "size": 20480, "description": "语文作业:背诵第3课;数学作业:练习册p50-52" } ]
 }
 ```
 
 错误:`404` 不存在。
 
-#### PATCH `/source-infos/{source_info_id}`(需鉴权)
+#### PATCH `/source-infos/{source_info_id}` — 修改内容并重新拆解(需鉴权)
+
+修改内容后**触发重新拆解**(只增不改:只为尚无任务的条目补任务),并返回新的 `run_id`。
 
 请求体:
 
@@ -355,7 +373,13 @@ SourceInfo 对象:
 { "content": "新的源信息内容" }
 ```
 
-返回:更新后的 `SourceInfo`。错误:`404` 不存在。
+返回:
+
+```json
+{ "source_info_id": 1, "run_id": "c90ce119-5baa-4f0c-a219-2a566cdcac9e" }
+```
+
+错误:`400` 未提供 `content`;`404` 不存在;`409` 该源信息已有进行中的运行(pending/running)。
 
 #### DELETE `/source-infos/{source_info_id}`(需鉴权)
 
@@ -368,18 +392,6 @@ SourceInfo 对象:
 ```
 
 错误:`404` 不存在。
-
-#### POST `/source-infos/{source_info_id}/decompose` — 发起拆解(需鉴权)
-
-异步提交一个拆解运行,立即返回运行 UUID,之后用 `/runs/{run_id}` 轮询。
-
-返回:
-
-```json
-{ "run_id": "c90ce119-5baa-4f0c-a219-2a566cdcac9e" }
-```
-
-错误:`404` 源信息不存在;`409` 该源信息已有进行中的运行(pending/running)。
 
 ### 拆解任务
 

@@ -13,16 +13,20 @@ The data-owning entity behind an Account: owns Tasks, SourceInfos, and User Pref
 _Avoid_: person, profile
 
 **Task**:
-A single executable todo item — the unit of work a user tracks. Has a description, progress (0–100), an optional ISO 8601 deadline, and a Priority. Completion is derived, not stored: a Task is complete iff `progress == 100`. A Task may optionally carry a Category; a generated Task always carries a Source, a manually added Task may have none.
-_Avoid_: Todo, item, status (when meaning completion)
+A single executable todo item — the unit of work a user tracks. Has a description, a status (`incomplete` | `completed`), optional free-text details describing finer progress (e.g. "已背前 3 段"), an optional ISO 8601 deadline, and a Priority. A Task may optionally carry a Category; a generated Task always carries a Source, a manually added Task may have none.
+_Avoid_: Todo, item, progress (as a numeric 0–100 scale)
 
 **SourceInfo**:
-The raw source information a user submits to the Agent in a single submission — e.g. a homework list handed down by a superior. Requirements (deadlines, categorization preferences) are embedded in its content, not stored separately. Persisted as a first-class entity, holding one or more SourceItems.
+The raw source information a user submits to the Agent in a single submission — e.g. a homework list handed down by a superior. Requirements (deadlines, categorization preferences) are embedded in its content, not stored separately. Persisted as a first-class entity, holding one or more SourceItems and zero or more SourceImages.
 _Avoid_: Assignment, source info (as a one-off), task list, 作业清单 (when meaning SourceInfo)
 
 **SourceItem**:
-An entry within a SourceInfo. For text content, one item per entry; for media (e.g. an image) that resists itemization, the whole media may be a single SourceItem. Tasks are generated from SourceItems.
+An entry within a SourceInfo. For text content, one item per entry. Tasks are generated from SourceItems. A SourceItem may reference a SourceImage (`source_image_id`) when it was derived from an image.
 _Avoid_: source entry, line item
+
+**SourceImage**:
+An image uploaded with a SourceInfo, stored on disk under a UUID. The VLM preprocesses it into a text description (stored on the SourceImage) before the Agent decomposes; the language model never sees the raw image.
+_Avoid_: attachment, 图片 (when meaning SourceImage), content_type (not stored — real type is sniffed from bytes)
 
 **Source**:
 The relationship from a Task back to the SourceItem it was decomposed from. A single SourceItem may yield many Tasks, so the relationship is many-to-one. Optional — manually added Tasks have no Source.

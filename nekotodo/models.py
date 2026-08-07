@@ -48,7 +48,8 @@ class Task(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     description: Mapped[str] = mapped_column(Text)
-    progress: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="incomplete")
+    details: Mapped[str] = mapped_column(Text, default="")
     deadline: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -79,6 +80,9 @@ class SourceInfo(Base):
     source_items: Mapped[list["SourceItem"]] = relationship(
         back_populates="source_info", cascade="all, delete-orphan"
     )
+    source_images: Mapped[list["SourceImage"]] = relationship(
+        back_populates="source_info", cascade="all, delete-orphan"
+    )
 
 
 class SourceItem(Base):
@@ -90,10 +94,31 @@ class SourceItem(Base):
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     content: Mapped[str] = mapped_column(Text)
+    source_image_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("source_images.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     source_info: Mapped["SourceInfo"] = relationship(back_populates="source_items")
+    source_image: Mapped[Optional["SourceImage"]] = relationship(back_populates="source_items")
     tasks: Mapped[list["Task"]] = relationship(back_populates="source_item")
+
+
+class SourceImage(Base):
+    __tablename__ = "source_images"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_info_id: Mapped[int] = mapped_column(
+        ForeignKey("source_infos.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    file_uuid: Mapped[str] = mapped_column(String(36), unique=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    source_info: Mapped["SourceInfo"] = relationship(back_populates="source_images")
+    source_items: Mapped[list["SourceItem"]] = relationship(back_populates="source_image")
 
 
 class DecompositionRun(Base):

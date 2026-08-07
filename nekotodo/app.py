@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy import update
 
-from nekotodo import db
+from nekotodo import db, storage as storage_mod
 from nekotodo.agent import runner
 from nekotodo.api import auth, preferences, runs, source_infos, tasks
 from nekotodo.config import get_settings
@@ -30,6 +30,7 @@ async def lifespan(_app: FastAPI):
         raise RuntimeError("auth.jwt_secret is not set; refusing to start")
     db.init_db(settings.database.path)
     await db.init_schema()
+    storage_mod.init_storage(settings.files.dir)
     runner.init_agent(settings, db.get_session_factory())
     await _reconcile_stale_runs()
     yield

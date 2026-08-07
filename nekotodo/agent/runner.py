@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -8,10 +9,11 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from nekotodo import storage as storage_mod
 from nekotodo import tools
 from nekotodo.agent.manager import AgentManager
 from nekotodo.agent.prompts import build_system_prompt, build_user_message
-from nekotodo.config import Settings
+from nekotodo.config import IMAGE_EXTRACTION_PROMPT, Settings
 from nekotodo.models import DecompositionRun, SourceInfo, User
 
 _manager: AgentManager | None = None
@@ -93,12 +95,43 @@ async def _execute_run(run_id: str) -> None:
             tz = ZoneInfo("UTC")
         now_local = datetime.now(tz)
 
+        # VLM preprocess images; reuse descriptions already stored from a prior run.
+        async with session_factory() as s:
+            images = await tools.list_source_images(s, run.user_id, run.source_info_id)
+            for image in images:
+                if not image.description:
+                    if manager.vlm_client is None:
+                        raise RuntimeError("VLM is not configured; cannot process images")
+                    data = storage_mod.get_storage().read(run.user_id, image.file_uuid)
+                    mime = storage_mod.detect_image_mime(data)
+                    if mime is None:
+                        raise RuntimeError(f"stored file {image.file_uuid} is not a valid image")
+                    data_uri = f"data:{mime};base64,{base64.b64encode(data).decode()}"
+                    image.description = await manager.extract_image(IMAGE_EXTRACTION_PROMPT, data_uri)
+                    await s.commit()
+
+        # Build the system prompt from the template via placeholders (no fallback).
+        async with session_factory() as s:
+            source_items = await tools.list_source_items(s, run.user_id, run.source_info_id)
+        images_block = "\n".join(
+            f"- 图片(id {image.id}, 文件 {image.file_uuid}): {image.description or '(无描述)'}"
+            for image in images
+        ) or "(无图片)"
+        source_items_block = "\n".join(
+            f"- [{item.id}] {item.content}" for item in source_items
+        ) or "(尚未切分条目)"
+        context = {
+            "source_info_id": str(source_info.id),
+            "current_time": now_local.isoformat(),
+            "timezone": user.timezone or "UTC",
+            "source_content": source_info.content or "(无文本内容)",
+            "source_items": source_items_block,
+            "images": images_block,
+        }
         system_prompt = build_system_prompt(
-            settings.prompt.default_template,
-            user.custom_prompt_template,
-            user.timezone or "UTC",
-            now_local,
+            settings.prompt.default_template, user.custom_prompt_template, context
         )
+        user_message = build_user_message()
 
         created_ids: list[int] = []
 
@@ -146,8 +179,10 @@ async def _execute_run(run_id: str) -> None:
             kwargs = {}
             if "description" in args:
                 kwargs["description"] = args["description"]
-            if "progress" in args:
-                kwargs["progress"] = args["progress"]
+            if "status" in args:
+                kwargs["status"] = args["status"]
+            if "details" in args:
+                kwargs["details"] = args["details"]
             if "deadline" in args:
                 kwargs["deadline"] = _parse_deadline(args["deadline"], tz)
             if "category" in args:
@@ -170,23 +205,39 @@ async def _execute_run(run_id: str) -> None:
         async def handler_create_source_item(args: dict) -> str:
             async with session_factory() as s:
                 item = await tools.create_source_item(
-                    s, run.user_id, args["source_info_id"], args["content"]
+                    s,
+                    run.user_id,
+                    args["source_info_id"],
+                    args["content"],
+                    source_image_id=args.get("source_image_id"),
                 )
                 await s.commit()
                 if item is None:
                     return json.dumps({"error": "source info not found"})
                 return json.dumps(
-                    {"id": item.id, "source_info_id": item.source_info_id, "content": item.content},
+                    {
+                        "id": item.id,
+                        "source_info_id": item.source_info_id,
+                        "content": item.content,
+                        "source_image_id": item.source_image_id,
+                    },
                     ensure_ascii=False,
                 )
 
         async def handler_list_source_items(args: dict) -> str:
             async with session_factory() as s:
-                items = await tools.list_source_items(
-                    s, run.user_id, args["source_info_id"]
-                )
+                items = await tools.list_source_items(s, run.user_id, args["source_info_id"])
                 return json.dumps(
-                    [{"id": i.id, "content": i.content} for i in items], ensure_ascii=False
+                    [
+                        {
+                            "id": i.id,
+                            "source_info_id": i.source_info_id,
+                            "content": i.content,
+                            "source_image_id": i.source_image_id,
+                        }
+                        for i in items
+                    ],
+                    ensure_ascii=False,
                 )
 
         handlers = {
@@ -198,10 +249,6 @@ async def _execute_run(run_id: str) -> None:
             "create_source_item": handler_create_source_item,
             "list_source_items": handler_list_source_items,
         }
-
-        async with session_factory() as s:
-            source_items = await tools.list_source_items(s, run.user_id, run.source_info_id)
-        user_message = build_user_message(source_info, source_items)
 
         tool_calls_used, _final = await manager.run(system_prompt, user_message, handlers)
         if tool_calls_used == 0:

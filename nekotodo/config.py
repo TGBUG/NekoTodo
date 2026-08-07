@@ -12,13 +12,13 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-DEFAULT_PROMPT = """你是一个待办拆解助手。用户会提交一段原始源信息(如一份上级派发的作业清单),其中可能内嵌要求(如截止时间、分类偏好)。
+DEFAULT_PROMPT = """你是一个待办拆解助手。用户会提交一段原始源信息(如一份上级派发的作业清单),其中可能内嵌要求(如截止时间、分类偏好);若有图片,会附带 VLM 预处理出的文字描述。
 
 工作流程:
 1. 先调用 list_source_items 查看该源信息已有的条目。若内容尚未切分,调用 create_source_item 把原始内容切成条目:
    - 文本:每条独立的作业/事项切成一个条目。
    - 内容中的要求、截止、偏好等约束不要单独切成条目——它们用来指导任务的 deadline/category/priority。
-   - 图片等难以逐条划分的媒体:整份作为一个条目。
+   - 图片:根据其文字描述拆出条目,并用 source_image_id 关联到对应图片。
 2. 为每个"还没有任务的条目"调用 create_task 生成可执行任务:
    - 一条可能拆出多个任务(若包含多个可执行步骤)。
    - 用 source_item_id 把任务关联到对应条目。
@@ -26,7 +26,22 @@ DEFAULT_PROMPT = """你是一个待办拆解助手。用户会提交一段原始
 3. 绝不删除或修改已有任务。不确定时先 list_tasks,避免重复生成。
 4. 全部完成后,输出一条不含工具调用的普通消息,总结你生成了什么。
 
-时间上下文:系统会提供当前用户本地时间,相对表述(如"明天""下周一")以此为准。截止日期请传 ISO 8601;时区换算由系统处理,不要自行做时差加减。"""
+源信息 id: {source_info_id}
+
+源信息文本:
+{source_content}
+
+源信息已有条目:
+{source_items}
+
+图片内容(每条:图片id、文件UUID、描述):
+{images}
+
+当前用户本地时间: {current_time}(时区 {timezone})
+截止日期请传 ISO 8601;时区换算由系统处理,不要自行做时差加减。"""
+
+# 图片预处理提示词(VLM 专用,当前不可配置)
+IMAGE_EXTRACTION_PROMPT = "请仔细查看这张图片,把其中出现的作业/任务/待办内容逐条、完整地提取出来。用中文逐条列出,保留原意与关键信息(如科目、页数、要求、截止时间)。若图片不是待办清单,如实说明。"
 
 
 class ServerSettings(BaseModel):
@@ -38,17 +53,28 @@ class DatabaseSettings(BaseModel):
     path: str = "./nekotodo.db"
 
 
+class FilesSettings(BaseModel):
+    dir: str = "./uploads"
+
+
 class AuthSettings(BaseModel):
     jwt_secret: str = ""
     algorithm: str = "HS256"
 
 
-class AISettings(BaseModel):
-    base_url: str = "https://api.openai.com/v1"
-    api_key: str = ""
-    model: str = "deepseek-chat"
+class LLMSettings(BaseModel):
+    base_url: str = "https://api.deepseek.com"
+    api_key: str = "sk-xxxx"
+    model: str = "deepseek-v4-flash"
     timeout_seconds: float = 120.0
     max_iterations: int = 100
+
+
+class VLMSettings(BaseModel):
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    timeout_seconds: float = 120.0
 
 
 class PromptSettings(BaseModel):
@@ -74,8 +100,10 @@ class RunsSettings(BaseModel):
 class Settings(BaseSettings):
     server: ServerSettings = ServerSettings()
     database: DatabaseSettings = DatabaseSettings()
+    files: FilesSettings = FilesSettings()
     auth: AuthSettings = AuthSettings()
-    ai: AISettings = AISettings()
+    llm: LLMSettings = LLMSettings()
+    vlm: VLMSettings = VLMSettings()
     prompt: PromptSettings = PromptSettings()
     registration: RegistrationSettings = RegistrationSettings()
     runs: RunsSettings = RunsSettings()

@@ -65,11 +65,12 @@ def build_tool_specs() -> list[dict]:
         ),
         _tool(
             "update_task",
-            "修改一个已有任务(描述/进度/截止日期/分类)。进度 0-100,100 表示完成。",
+            "修改一个已有任务(描述/状态/详情/截止日期/分类)。status 为 'incomplete' 或 'completed';details 用自由文本描述进度细节。",
             {
                 "task_id": {"type": "integer", "description": "任务 id"},
                 "description": {"type": ["string", "null"], "description": "新的描述"},
-                "progress": {"type": ["integer", "null"], "description": "0-100"},
+                "status": {"type": ["string", "null"], "description": "'incomplete' 或 'completed'"},
+                "details": {"type": ["string", "null"], "description": "进度细节,传 null 清空"},
                 "deadline": {"type": ["string", "null"], "description": "截止日期,传 null 清空"},
                 "category": {"type": ["string", "null"], "description": "分类键,传 null 清空"},
             },
@@ -86,10 +87,14 @@ def build_tool_specs() -> list[dict]:
         ),
         _tool(
             "create_source_item",
-            "把源信息内容切分为一个来源条目。文本源信息每条独立内容一个条目;内容中的要求/截止等约束不要切成条目;难以逐条划分的媒体整份一个条目。",
+            "把源信息内容切分为一个来源条目。文本源信息每条独立内容一个条目;内容中的要求/截止等约束不要切成条目。若条目来源于某张图片,填 source_image_id。",
             {
                 "source_info_id": {"type": "integer", "description": "源信息 id"},
                 "content": {"type": "string", "description": "该条目的内容"},
+                "source_image_id": {
+                    "type": ["integer", "null"],
+                    "description": "来源图片 id(若条目来自某张图片)",
+                },
             },
             ["source_info_id", "content"],
         ),
@@ -105,18 +110,44 @@ def build_tool_specs() -> list[dict]:
 class AgentManager:
     def __init__(self, settings: Settings):
         self.settings = settings
-        # The AI endpoint is explicit config; do not silently route it through
-        # whatever proxy the ambient environment happens to set (trust_env).
+        # The AI endpoints are explicit config; do not silently route them
+        # through whatever proxy the ambient environment happens to set.
         self._http_client = httpx.AsyncClient(trust_env=False)
         self.client = AsyncOpenAI(
-            base_url=settings.ai.base_url,
-            api_key=settings.ai.api_key or "sk-not-set",
-            timeout=settings.ai.timeout_seconds,
+            base_url=settings.llm.base_url,
+            api_key=settings.llm.api_key or "sk-not-set",
+            timeout=settings.llm.timeout_seconds,
             http_client=self._http_client,
         )
+        self.vlm_client: AsyncOpenAI | None = None
+        if settings.vlm.base_url and settings.vlm.model:
+            self.vlm_client = AsyncOpenAI(
+                base_url=settings.vlm.base_url,
+                api_key=settings.vlm.api_key or "sk-not-set",
+                timeout=settings.vlm.timeout_seconds,
+                http_client=self._http_client,
+            )
 
     async def aclose(self) -> None:
         await self._http_client.aclose()
+
+    async def extract_image(self, prompt: str, data_uri: str) -> str:
+        """Run the VLM once to turn an image into text. Data URI is base64."""
+        if self.vlm_client is None:
+            raise RuntimeError("VLM is not configured")
+        response = await self.vlm_client.chat.completions.create(
+            model=self.settings.vlm.model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                    ],
+                }
+            ],
+        )
+        return response.choices[0].message.content or ""
 
     async def run(
         self,
@@ -134,9 +165,9 @@ class AgentManager:
         ]
         tool_calls_used = 0
         final_message = ""
-        for _ in range(self.settings.ai.max_iterations):
+        for _ in range(self.settings.llm.max_iterations):
             response = await self.client.chat.completions.create(
-                model=self.settings.ai.model,
+                model=self.settings.llm.model,
                 messages=messages,
                 tools=build_tool_specs(),
             )

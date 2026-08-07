@@ -33,17 +33,14 @@ class TaskCreate(BaseModel):
 
 class TaskUpdate(BaseModel):
     description: str | None = None
-    progress: int | None = None
+    status: str | None = None
+    details: str | None = None
     deadline: str | None = None
     category: str | None = None
 
 
 class TaskMove(BaseModel):
     to_position: int
-
-
-class SourceInfoCreate(BaseModel):
-    content: str = Field(min_length=1)
 
 
 class SourceInfoUpdate(BaseModel):

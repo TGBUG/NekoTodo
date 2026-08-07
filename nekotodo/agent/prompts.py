@@ -1,33 +1,32 @@
 from __future__ import annotations
 
-from datetime import datetime
+import re
 
-from nekotodo.models import SourceInfo, SourceItem
+_PLACEHOLDER = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+
+def render_template(template: str, context: dict[str, str]) -> str:
+    """Substitute ``{key}`` placeholders from ``context``.
+
+    Unknown placeholders are left verbatim; no fallback sections are appended —
+    the template author controls what appears and where.
+    """
+
+    def _repl(match: re.Match) -> str:
+        key = match.group(1)
+        return context.get(key, match.group(0))
+
+    return _PLACEHOLDER.sub(_repl, template)
 
 
 def build_system_prompt(
     default_template: str,
     user_template: str | None,
-    timezone_name: str,
-    now_local: datetime,
+    context: dict[str, str],
 ) -> str:
     template = user_template or default_template
-    return "\n\n".join(
-        [
-            template,
-            f"当前用户本地时间: {now_local.isoformat()}(时区 {timezone_name})",
-            "设置截止日期时直接传 ISO 8601 字符串即可,时区换算由系统处理,不要自行做时差加减。",
-        ]
-    )
+    return render_template(template, context)
 
 
-def build_user_message(source_info: SourceInfo, source_items: list[SourceItem]) -> str:
-    items = "\n".join(f"- [{item.id}] {item.content}" for item in source_items)
-    if not items:
-        items = "(尚未切分条目)"
-    return (
-        f"请拆解以下源信息(源信息 id = {source_info.id}):\n\n{source_info.content}\n\n"
-        f"当前已有条目:\n{items}\n\n"
-        "请先切分/确认条目,再为还没有任务的条目生成任务;把源信息中内嵌的要求"
-        "(如截止时间、分类偏好)应用到任务的 deadline/category/priority,不要把它们单独切成条目。"
-    )
+def build_user_message() -> str:
+    return "请按上述说明开始拆解。"

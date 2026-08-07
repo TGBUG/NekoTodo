@@ -10,21 +10,35 @@ port = 8000
 # SQLite 文件路径
 path = "./nekotodo.db"
 
+[files]
+# 上传文件(图片)的存储目录;按用户分目录,文件名为 UUID
+dir = "./uploads"
+
 [auth]
 # 必填:JWT 签名密钥,请改为一段足够长的随机字符串
 jwt_secret = "change-me-to-a-long-random-string"
 algorithm = "HS256"
 
-[ai]
-# 任意 OpenAI 兼容端点
+[llm]
+# 语言大模型(拆解循环使用),任意 OpenAI 兼容端点
 base_url = "https://api.deepseek.com"
 api_key = "sk-xxxx"
 model = "deepseek-v4-flash"
 timeout_seconds = 120
 max_iterations = 100
 
+[vlm]
+# 视觉模型(仅用于图片预处理:图片 -> 文字描述),OpenAI 标准。
+# 允许留空;留空时若提交了图片,接口会返回 400。
+base_url = ""
+api_key = ""
+model = ""
+timeout_seconds = 120
+
 [prompt]
-# 留空或省略则使用内置默认拆解提示词
+# 拆解系统提示词模板,支持占位符:
+#   {source_content} {source_items} {images} {current_time} {timezone}
+# 留空或省略则使用内置默认模板。
 # default_template = ""
 
 [registration]
@@ -40,5 +54,6 @@ retention_days = 30
 
 # 敏感项可用环境变量覆盖(优先级高于文件):
 #   NEKOTODO_AUTH__JWT_SECRET
-#   NEKOTODO_AI__API_KEY
+#   NEKOTODO_LLM__API_KEY
+#   NEKOTODO_VLM__API_KEY
 #   NEKOTODO_REGISTRATION__TURNSTILE_SECRET_KEY
