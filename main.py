@@ -1,13 +1,19 @@
-from fastapi import FastAPI
+from __future__ import annotations
 
-app = FastAPI()
+import argparse
+
+import uvicorn
+
+from nekotodo.config import load_settings
 
 
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
+def main() -> None:
+    parser = argparse.ArgumentParser(description="NekoTodo backend")
+    parser.add_argument("--config", default=None, help="path to config file")
+    args = parser.parse_args()
+    settings = load_settings(args.config)
+    uvicorn.run("nekotodo.app:app", host=settings.server.host, port=settings.server.port)
 
 
-@app.get("/hello/{name}")
-async def say_hello(name: str):
-    return {"message": f"Hello {name}"}
+if __name__ == "__main__":
+    main()

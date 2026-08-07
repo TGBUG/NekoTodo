@@ -1,0 +1,44 @@
+# NekoTodo 配置文件示例
+# 复制为 config.toml 后按需修改;或用 --config <path> 指定路径,
+# 或设 NEKOTODO_CONFIG 环境变量指向它。
+
+[server]
+host = "127.0.0.1"
+port = 8000
+
+[database]
+# SQLite 文件路径
+path = "./nekotodo.db"
+
+[auth]
+# 必填:JWT 签名密钥,请改为一段足够长的随机字符串
+jwt_secret = "change-me-to-a-long-random-string"
+algorithm = "HS256"
+
+[ai]
+# 任意 OpenAI 兼容端点
+base_url = "https://api.deepseek.com"
+api_key = "sk-xxxx"
+model = "deepseek-v4-flash"
+timeout_seconds = 120
+max_iterations = 100
+
+[prompt]
+# 留空或省略则使用内置默认拆解提示词
+# default_template = ""
+
+[registration]
+# 是否开放公开注册;关闭时只能通过 CLI 手动注册账户
+allow_public = false
+require_turnstile = false
+turnstile_site_key = ""
+turnstile_secret_key = ""
+
+[runs]
+# DecompositionRun 记录保留窗口(天)
+retention_days = 30
+
+# 敏感项可用环境变量覆盖(优先级高于文件):
+#   NEKOTODO_AUTH__JWT_SECRET
+#   NEKOTODO_AI__API_KEY
+#   NEKOTODO_REGISTRATION__TURNSTILE_SECRET_KEY
