@@ -47,6 +47,8 @@ IMAGE_EXTRACTION_PROMPT = "请仔细查看这张图片,把其中出现的作业/
 class ServerSettings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
+    # 允许跨域请求(测试/特殊环境用);开启后服务处理 OPTIONS 预检请求。默认关闭。
+    allow_cors: bool = False
 
 
 class DatabaseSettings(BaseModel):

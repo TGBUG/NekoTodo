@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 _storage: "Storage | None" = None
@@ -39,6 +40,9 @@ class Storage:
             self.path(user_id, uuid).unlink(missing_ok=True)
         except OSError:
             pass
+
+    def delete_user_dir(self, user_id: int) -> None:
+        shutil.rmtree(self._user_dir(user_id), ignore_errors=True)
 
 
 def init_storage(base_dir: str | Path) -> Storage:

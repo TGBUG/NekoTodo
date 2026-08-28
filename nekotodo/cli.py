@@ -7,7 +7,7 @@ import sys
 
 from sqlalchemy import select
 
-from nekotodo import db, security
+from nekotodo import db, security, storage as storage_mod, tools
 from nekotodo.config import load_settings
 from nekotodo.models import Account, User
 
@@ -31,6 +31,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("username")
     p.add_argument("--password", default=None, help="new password (prompted if omitted)")
 
+    p = sub.add_parser(
+        "delete-account", help="delete an account and all of its data (tasks, source infos, files)"
+    )
+    p.add_argument("username")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
     return parser
 
 
@@ -38,6 +44,7 @@ async def _run(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     db.init_db(settings.database.path)
     await db.init_schema()
+    storage_mod.init_storage(settings.files.dir)
     factory = db.get_session_factory()
 
     if args.command == "register":
@@ -101,6 +108,26 @@ async def _run(args: argparse.Namespace) -> int:
             account.auth_version += 1
             await session.commit()
         print(f"reset password for '{args.username}' (all tokens revoked)")
+        return 0
+
+    if args.command == "delete-account":
+        async with factory() as session:
+            result = await session.execute(select(Account).where(Account.username == args.username))
+            account = result.scalar_one_or_none()
+            if account is None:
+                print(f"error: no such account '{args.username}'", file=sys.stderr)
+                return 1
+            if not args.yes:
+                confirm = input(
+                    f"this will permanently delete '{args.username}' and ALL of its data. "
+                    "type the username to confirm: "
+                )
+                if confirm.strip() != args.username:
+                    print("aborted", file=sys.stderr)
+                    return 1
+            await tools.delete_user(session, account.user_id)
+            await session.commit()
+        print(f"deleted account '{args.username}' and all its data")
         return 0
 
     print(f"unknown command: {args.command}", file=sys.stderr)

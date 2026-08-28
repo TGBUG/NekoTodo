@@ -12,6 +12,9 @@ config.toml
 *.db-wal
 *.db-shm
 
+# Uploaded files (runtime data)
+uploads/
+
 # IDE
 .idea/
 .vscode/

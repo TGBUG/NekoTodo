@@ -32,7 +32,7 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    account: Mapped["Account"] = relationship(back_populates="user")
+    account: Mapped["Account"] = relationship(back_populates="user", cascade="all, delete-orphan")
     tasks: Mapped[list["Task"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     source_infos: Mapped[list["SourceInfo"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

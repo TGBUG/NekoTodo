@@ -19,6 +19,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class DeleteAccountRequest(BaseModel):
+    password: str
+
+
 class PreferencesUpdate(BaseModel):
     custom_prompt_template: str | None = None
     timezone: str | None = None

@@ -5,6 +5,9 @@
 [server]
 host = "127.0.0.1"
 port = 8000
+# 允许跨域请求(测试/特殊环境用);true 时服务处理 OPTIONS 预检,允许任意来源。
+# 生产环境建议保持 false。
+allow_cors = false
 
 [database]
 # SQLite 文件路径

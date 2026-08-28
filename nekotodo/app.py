@@ -3,11 +3,12 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import update
 
 from nekotodo import db, storage as storage_mod
 from nekotodo.agent import runner
-from nekotodo.api import auth, preferences, runs, source_infos, tasks
+from nekotodo.api import auth, images, preferences, runs, source_infos, tasks
 from nekotodo.config import get_settings
 from nekotodo.models import DecompositionRun
 
@@ -37,7 +38,17 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="NekoTodo", lifespan=lifespan)
+
+if get_settings().server.allow_cors:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 app.include_router(auth.router)
+app.include_router(images.router)
 app.include_router(preferences.router)
 app.include_router(tasks.router)
 app.include_router(source_infos.router)

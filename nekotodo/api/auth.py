@@ -5,11 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nekotodo import security
+from nekotodo import security, tools
 from nekotodo.api.deps import get_current_account, get_current_user, get_session
 from nekotodo.config import get_settings
 from nekotodo.models import Account, User
-from nekotodo.schemas import ChangePasswordRequest, LoginRequest, RegisterRequest
+from nekotodo.schemas import ChangePasswordRequest, DeleteAccountRequest, LoginRequest, RegisterRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -105,3 +105,16 @@ async def me(
         "custom_prompt_template": user.custom_prompt_template,
         "timezone": user.timezone,
     }
+
+
+@router.post("/delete-account")
+async def delete_account(
+    payload: DeleteAccountRequest,
+    account: Account = Depends(get_current_account),
+    session: AsyncSession = Depends(get_session),
+):
+    if not security.verify_password(payload.password, account.password_hash):
+        raise HTTPException(status_code=400, detail="password incorrect")
+    await tools.delete_user(session, account.user_id)
+    await session.commit()
+    return {"ok": True}

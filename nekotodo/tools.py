@@ -7,7 +7,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nekotodo.models import SourceImage, SourceInfo, SourceItem, Task
+from nekotodo.models import SourceImage, SourceInfo, SourceItem, Task, User
 from nekotodo.storage import get_storage
 
 _UNSET = object()
@@ -391,4 +391,19 @@ async def delete_source_info(session: AsyncSession, user_id: int, source_info_id
     await session.delete(source_info)  # ORM cascade removes SourceItems + SourceImages
     await _renormalize_priorities(session, user_id)
     _delete_files(files)
+    return True
+
+
+async def delete_user(session: AsyncSession, user_id: int) -> bool:
+    user = await session.get(User, user_id)
+    if user is None:
+        return False
+    result = await session.execute(
+        select(SourceImage.user_id, SourceImage.file_uuid).where(SourceImage.user_id == user_id)
+    )
+    files = [(row[0], row[1]) for row in result]
+    # ORM cascade: Account, Tasks, SourceInfos (-> SourceItems + SourceImages), DecompositionRuns
+    await session.delete(user)
+    _delete_files(files)
+    get_storage().delete_user_dir(user_id)
     return True

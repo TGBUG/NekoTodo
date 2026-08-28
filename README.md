@@ -6,6 +6,33 @@ AI 加持的待办清单系统后端。既保留经典待办清单的手动操�
 
 核心闭环:提交源信息 → 异步拆解(Agent 自动切分条目并生成待办)→ 前端轮询结果 → 之后照常手动跟进。
 
+## 核心数据模型:SourceInfo → SourceItem → Task
+
+系统的核心价值是把"原始源信息"变成"可执行待办"。三类实体环环相扣,角色如下:
+
+| 实体 | 角色 | 说明 |
+| --- | --- | --- |
+| **SourceInfo** 源信息 | 输入 | 用户单次提交的原始信息:一段文本(如作业清单),可选附带多张图片;要求(截止时间、分类偏好等)内嵌在内容中,不单独存储 |
+| **SourceImage** 来源图片 | 多模态输入 | 随源信息上传的图片,存于 `[files].dir`;由 VLM 预处理成文字描述后才参与拆解(两段式) |
+| **SourceItem** 来源条目 | 拆解中间产物 | Agent 把源信息切分成的条目(如"数学:练习册p50-52"),可关联到某张 `SourceImage` |
+| **Task** 任务 | 输出 | 最终的可执行待办,由条目生成;带描述/状态/details/截止/优先级/分类 |
+
+实体间关系:
+
+```
+SourceInfo ──1:N──► SourceItem ──1:N──► Task      (Task 经 source_item_id 指向条目)
+SourceInfo ──1:N──► SourceImage                 (图片随源信息上传)
+SourceItem ──0..1──► SourceImage                (条目经 source_image_id 溯源到某张图)
+```
+
+一次拆解的完整链路:
+
+1. 用户提交 `SourceInfo`(multipart:文本 `content` + 多张图片 `files`)
+2. 有图片时,**VLM 先把每张图预处理成文字描述**存入 `SourceImage.description`——主语言模型不直接看图,规避视觉模型文本能力弱的问题
+3. Agent 把源信息内容(文本 + 图片描述)切分为 `SourceItem`,需要时关联到 `SourceImage`
+4. 为每个**尚无任务**的条目生成 `Task`(只增不改,重拆不覆盖手动改动)
+5. 前端经 `source_item_id` / `source_image_id` 溯源:"这个待办来自哪条作业、哪张图"
+
 ## 技术栈
 
 - Python 3.13+、FastAPI、uv
@@ -62,6 +89,7 @@ NEKOTODO_CONFIG=config.toml uvicorn nekotodo.app:app
 | 段 | 字段 | 说明 |
 | --- | --- | --- |
 | `[server]` | `host` / `port` | 监听地址与端口 |
+| `[server]` | `allow_cors` | 允许跨域请求(默认 `false`);开启后服务处理 OPTIONS 预检,允许任意来源,适合测试/特殊环境 |
 | `[database]` | `path` | SQLite 文件路径 |
 | `[files]` | `dir` | 上传文件存储目录,按用户分目录、UUID 文件名 |
 | `[auth]` | `jwt_secret` / `algorithm` | JWT 签名密钥(必填)与算法 |
@@ -92,6 +120,7 @@ NEKOTODO_REGISTRATION__TURNSTILE_SECRET_KEY=...
 | `nekotodo list-accounts` | 列出全部账户 |
 | `nekotodo revoke-all <用户名>` | 使该账户所有 token 立即失效 |
 | `nekotodo reset-password <用户名> [--password ...]` | 重置密码并撤销所有 token |
+| `nekotodo delete-account <用户名> [--yes]` | 删除账户及全部数据(任务/源信息/文件),需二次确认 |
 
 所有命令接受 `--config <path>` 指定配置。
 
@@ -181,6 +210,24 @@ NEKOTODO_REGISTRATION__TURNSTILE_SECRET_KEY=...
 ```
 
 错误:`400` 原密码错误。
+
+#### POST `/auth/delete-account` — 注销账户(需鉴权)
+
+**不可逆**:删除当前账户及其全部数据(任务、源信息、条目、图片、拆解记录与磁盘文件)。需携带当前密码确认。
+
+请求体:
+
+```json
+{ "password": "password123" }
+```
+
+返回:
+
+```json
+{ "ok": true }
+```
+
+错误:`400` 密码错误。
 
 #### GET `/auth/me` — 当前用户信息(需鉴权)
 
@@ -362,6 +409,12 @@ SourceInfo 对象:
 ```
 
 错误:`404` 不存在。
+
+#### GET `/source-images/{file_uuid}` — 获取图片文件(需鉴权)
+
+用源信息详情里的 `file_uuid` 换取图片原始数据。仅能获取当前用户自己的图片。
+
+返回:图片二进制流,`Content-Type` 为实际图片类型(png/jpeg/webp/gif,按内容嗅探)。错误:`404` 不存在或无权限。
 
 #### PATCH `/source-infos/{source_info_id}` — 修改内容并重新拆解(需鉴权)
 
