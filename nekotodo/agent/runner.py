@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,8 @@ from nekotodo.models import DecompositionRun, SourceInfo, User
 _manager: AgentManager | None = None
 _session_factory: async_sessionmaker | None = None
 _settings: Settings | None = None
+
+log = logging.getLogger("nekotodo.runner")
 
 
 class ConcurrentRunError(Exception):
@@ -70,6 +73,7 @@ async def submit_decomposition(
     session.add(run)
     await session.commit()
     await session.refresh(run)
+    log.info("run %s queued (user=%s, source_info=%s)", run.id, user_id, source_info_id)
     asyncio.get_running_loop().create_task(_execute_run(run.id))
     return run
 
@@ -85,6 +89,7 @@ async def _execute_run(run_id: str) -> None:
             user = await session.get(User, run.user_id)
             run.status = "running"
             await session.commit()
+            log.info("run %s started (source_info=%s)", run.id, run.source_info_id)
 
         if source_info is None or user is None:
             raise RuntimeError("source info or user missing")
@@ -108,6 +113,10 @@ async def _execute_run(run_id: str) -> None:
                         raise RuntimeError(f"stored file {image.file_uuid} is not a valid image")
                     data_uri = f"data:{mime};base64,{base64.b64encode(data).decode()}"
                     image.description = await manager.extract_image(IMAGE_EXTRACTION_PROMPT, data_uri)
+                    log.info(
+                        "VLM 预处理完成 run=%s image=%s file=%s (%d 字符)",
+                        run.id, image.id, image.file_uuid, len(image.description),
+                    )
                     await s.commit()
 
         # Build the system prompt from the template via placeholders (no fallback).
@@ -259,7 +268,9 @@ async def _execute_run(run_id: str) -> None:
             run.status = "completed"
             run.created_task_ids = created_ids
             await session.commit()
+        log.info("run %s completed, created %d tasks", run_id, len(created_ids))
     except Exception as exc:  # noqa: BLE001 — record any failure on the run
+        log.exception("run %s failed", run_id)
         async with session_factory() as session:
             run = await session.get(DecompositionRun, run_id)
             if run is not None:

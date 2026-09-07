@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,9 +9,18 @@ from sqlalchemy import update
 
 from nekotodo import db, storage as storage_mod
 from nekotodo.agent import runner
-from nekotodo.api import auth, images, preferences, runs, source_infos, tasks
+from nekotodo.api import auth, files, preferences, runs, source_infos, tasks
 from nekotodo.config import get_settings
 from nekotodo.models import DecompositionRun
+
+# 让 nekotodo.* 的运行日志(拆解/VLM/LLM 等)统一输出到控制台,
+# 否则后台拆解任务的失败会被写进数据库而不在终端留下任何痕迹。
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+    force=True,
+)
 
 
 async def _reconcile_stale_runs() -> None:
@@ -48,7 +58,7 @@ if get_settings().server.allow_cors:
     )
 
 app.include_router(auth.router)
-app.include_router(images.router)
+app.include_router(files.router)
 app.include_router(preferences.router)
 app.include_router(tasks.router)
 app.include_router(source_infos.router)

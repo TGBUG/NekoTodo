@@ -1,4 +1,4 @@
-# NekoTodo-Core
+# NekoTodo
 
 *Powered by DeepSeek*
 
@@ -410,11 +410,11 @@ SourceInfo 对象:
 
 错误:`404` 不存在。
 
-#### GET `/source-images/{file_uuid}` — 获取图片文件(需鉴权)
+#### GET `/files/{file_uuid}` — 获取上传文件(需鉴权)
 
-用源信息详情里的 `file_uuid` 换取图片原始数据。仅能获取当前用户自己的图片。
+用源信息详情里的 `file_uuid` 换取文件原始数据。仅能获取当前用户自己的文件。存储本身是类型无关的,此端点通用,可承载图片及未来的更多文件类型。
 
-返回:图片二进制流,`Content-Type` 为实际图片类型(png/jpeg/webp/gif,按内容嗅探)。错误:`404` 不存在或无权限。
+返回:文件二进制流,`Content-Type` 按内容嗅探(当前图片为 png/jpeg/webp/gif,其他为 `application/octet-stream`)。错误:`404` 不存在或无权限。
 
 #### PATCH `/source-infos/{source_info_id}` — 修改内容并重新拆解(需鉴权)
 

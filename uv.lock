@@ -370,7 +370,7 @@ wheels = [
 ]
 
 [[package]]
-name = "nekotodo-core"
+name = "nekotodo"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Awaitable, Callable
 
 import httpx
@@ -9,6 +10,8 @@ from openai import AsyncOpenAI
 from nekotodo.config import Settings
 
 ToolHandler = Callable[[dict], Awaitable[str]]
+
+log = logging.getLogger("nekotodo.agent")
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -135,18 +138,25 @@ class AgentManager:
         """Run the VLM once to turn an image into text. Data URI is base64."""
         if self.vlm_client is None:
             raise RuntimeError("VLM is not configured")
-        response = await self.vlm_client.chat.completions.create(
-            model=self.settings.vlm.model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                    ],
-                }
-            ],
-        )
+        log.info("VLM 请求: base_url=%s model=%s", self.settings.vlm.base_url, self.settings.vlm.model)
+        try:
+            response = await self.vlm_client.chat.completions.create(
+                model=self.settings.vlm.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_uri}},
+                        ],
+                    }
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001 — surface endpoint/model with the original error
+            log.exception("VLM 调用失败")
+            raise RuntimeError(
+                f"VLM 调用失败 (base_url={self.settings.vlm.base_url}, model={self.settings.vlm.model}): {exc}"
+            ) from exc
         return response.choices[0].message.content or ""
 
     async def run(
@@ -165,12 +175,19 @@ class AgentManager:
         ]
         tool_calls_used = 0
         final_message = ""
+        log.info("LLM 拆解开始: base_url=%s model=%s", self.settings.llm.base_url, self.settings.llm.model)
         for _ in range(self.settings.llm.max_iterations):
-            response = await self.client.chat.completions.create(
-                model=self.settings.llm.model,
-                messages=messages,
-                tools=build_tool_specs(),
-            )
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.settings.llm.model,
+                    messages=messages,
+                    tools=build_tool_specs(),
+                )
+            except Exception as exc:  # noqa: BLE001 — surface endpoint/model with the original error
+                log.exception("LLM 调用失败")
+                raise RuntimeError(
+                    f"LLM 调用失败 (base_url={self.settings.llm.base_url}, model={self.settings.llm.model}): {exc}"
+                ) from exc
             message = response.choices[0].message
             if message.tool_calls:
                 tool_calls_used += len(message.tool_calls)
