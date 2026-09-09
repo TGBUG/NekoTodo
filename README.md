@@ -82,6 +82,11 @@ NEKOTODO_CONFIG=config.toml uvicorn nekotodo.app:app
 
 默认监听 `127.0.0.1:8000`,可用 `[server]` 配置修改。
 
+### 5. 使用前端
+
+目前提供了两个简易的单HTML文件前端，后续开发Android应用等
+（图像素材来源于网络，如侵犯了您的权益请联系删除）
+
 ## 配置说明
 
 配置文件为 TOML 格式。加载优先级:`--config` 命令行参数 > `NEKOTODO_CONFIG` 环境变量 > 当前目录 `./config.toml`。

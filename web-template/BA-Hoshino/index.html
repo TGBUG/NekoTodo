@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NekoTodo</title>
+<style>
+:root {
+  --bg: rgba(236, 239, 255, 0.30);
+  --panel: rgba(250, 251, 255, 0.52);
+  --fg: #3a3f63;
+  --muted: #868db6;
+  --border: rgba(147, 156, 228, 0.45);
+  --accent: #6c77da;
+  --accent-soft: rgba(108, 119, 218, 0.16);
+  --danger: #e0485e;
+  --ok: #3ba55d;
+  --shadow: 0 8px 26px rgba(100, 110, 190, 0.22);
+  --radius: 12px;
+  --map-bg: rgba(240, 242, 255, 0.92);
+}
+[data-theme="dark"] {
+  --bg: rgba(30, 33, 62, 0.32);
+  --panel: rgba(38, 41, 74, 0.55);
+  --fg: #e8e9fb;
+  --muted: #a6abcf;
+  --border: rgba(170, 178, 255, 0.25);
+  --accent: #97a0f0;
+  --accent-soft: rgba(151, 160, 240, 0.16);
+  --danger: #ff7a86;
+  --ok: #55c97b;
+  --shadow: 0 8px 26px rgba(0, 0, 0, 0.4);
+  --map-bg: rgba(25, 27, 54, 0.92);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--fg);
+  overflow: hidden; font-size: 14px;
+  /* BA-Hoshino 主题:同目录背景图铺满,加一层淡紫蓝遮罩保证前景可读 */
+  background-color: #eef0ff;
+  background-image: linear-gradient(rgba(238, 241, 255, 0.30), rgba(238, 241, 255, 0.30)),
+                    url("back_ground.jpg");
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+/* 磨砂玻璃:主要面板半透明 + 背景模糊,避免与背景图割裂 */
+#topbar, #sidebar, .task-card, .modal, #context-menu, #add-dropdown,
+#view-toggle, .toast, .run-row, .search-result, .si-item,
+input, textarea, select {
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  backdrop-filter: blur(12px) saturate(150%);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, textarea, select {
+  font: inherit; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+  outline: none; width: 100%;
+}
+input:focus, textarea:focus { border-color: var(--accent); }
+textarea { resize: vertical; }
+
+/* ---------- 顶栏 ---------- */
+#topbar {
+  height: 52px; display: flex; align-items: center; gap: 6px;
+  padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  position: relative; z-index: 20;
+}
+#logo {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #c9cffb, var(--accent) 45%, #4c55b8);
+  margin-right: auto; flex: none;
+}
+.icon-btn {
+  width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+  color: var(--muted); position: relative;
+}
+.icon-btn:hover { background: var(--accent-soft); color: var(--accent); }
+.icon-btn svg { width: 20px; height: 20px; }
+#runs-badge {
+  position: absolute; top: 6px; right: 6px; width: 9px; height: 9px;
+  border-radius: 50%; background: var(--danger); display: none;
+  animation: pulse 1.2s infinite;
+}
+@keyframes pulse { 50% { opacity: .35; } }
+#add-dropdown {
+  position: absolute; top: 48px; right: 0; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 6px; display: none; white-space: nowrap; z-index: 30;
+}
+#add-dropdown.show { display: block; }
+#add-dropdown button { display: block; width: 100%; text-align: left; padding: 8px 14px; border-radius: 8px; }
+#add-dropdown button:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- 布局 ---------- */
+#app { display: flex; height: calc(100% - 52px); }
+#sidebar {
+  width: 180px; flex: none; background: var(--panel); border-right: 1px solid var(--border);
+  padding: 10px 8px; overflow-y: auto;
+}
+#sidebar.hidden { display: none; }
+.cat-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; border-radius: 8px; cursor: pointer; color: var(--fg);
+  overflow: hidden;
+}
+.cat-item:hover { background: var(--accent-soft); }
+.cat-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.cat-item .n { color: var(--muted); font-size: 12px; }
+#main { flex: 1; position: relative; overflow: hidden; }
+
+/* ---------- 列表视图 ---------- */
+#list-view { height: 100%; overflow-y: auto; padding: 18px 22px 70px; }
+.section-title {
+  color: var(--muted); font-size: 13px; margin: 6px 2px 10px; user-select: none;
+}
+.divider {
+  display: flex; align-items: center; gap: 10px; margin: 22px 0 14px;
+  color: var(--muted); font-size: 13px; cursor: pointer; user-select: none;
+}
+.divider::before, .divider::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
+.task-card {
+  position: relative; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 52px 26px 14px; margin-bottom: 10px;
+  cursor: default;
+}
+.task-card[draggable="true"] { cursor: grab; }
+.task-card.drag-over { border-top: 2px solid var(--accent); }
+.task-card.done .desc { text-decoration: line-through; color: var(--muted); }
+.task-card .desc { word-break: break-word; }
+.task-card .details {
+  margin-top: 6px; font-size: 13px; color: var(--muted); word-break: break-word;
+  white-space: pre-wrap;
+}
+.task-card .chip {
+  display: inline-block; font-size: 12px; color: var(--accent); background: var(--accent-soft);
+  border-radius: 6px; padding: 1px 8px; margin-top: 6px;
+}
+.task-card .deadline {
+  position: absolute; right: 12px; bottom: 8px; font-size: 12px; color: var(--muted);
+}
+.task-card .deadline.overdue { color: var(--danger); font-weight: 600; }
+.task-check {
+  position: absolute; right: 12px; top: 12px; width: 20px; height: 20px;
+  border: 2px solid var(--border); border-radius: 6px; cursor: pointer;
+  display: grid; place-items: center; color: #fff; flex: none;
+}
+.task-check:hover { border-color: var(--accent); }
+.task-check.checked { background: var(--ok); border-color: var(--ok); }
+.empty-hint { color: var(--muted); text-align: center; padding: 30px 0; }
+
+/* ---------- 星图 ---------- */
+#map-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* ---------- 视图切换 ---------- */
+#view-toggle {
+  position: fixed; left: 16px; bottom: 16px; z-index: 25;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 8px 14px; color: var(--fg);
+  display: flex; align-items: center; gap: 8px;
+}
+#view-toggle:hover { color: var(--accent); border-color: var(--accent); }
+#view-toggle svg { width: 16px; height: 16px; }
+
+/* ---------- 模态小窗 ---------- */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .35);
+  display: none; align-items: center; justify-content: center; z-index: 50;
+}
+.modal-mask.open { display: flex; }
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow); width: 440px; max-width: 92vw; max-height: 84vh;
+  display: flex; flex-direction: column; position: relative; padding: 18px;
+}
+.modal.wide { width: 560px; }
+.modal h3 { font-size: 15px; margin-bottom: 14px; padding-right: 30px; }
+.modal-close {
+  position: absolute; top: 10px; right: 10px; width: 28px; height: 28px;
+  border-radius: 8px; color: var(--muted); font-size: 16px; line-height: 1;
+}
+.modal-close:hover { background: var(--accent-soft); color: var(--danger); }
+.modal-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+.field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.btn {
+  border: 1px solid var(--border); border-radius: 8px; padding: 7px 16px; color: var(--fg);
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { opacity: .9; color: #fff; }
+.btn.danger { color: var(--danger); border-color: var(--danger); }
+.btn.danger:hover { background: var(--danger); color: #fff; }
+.btn.check {
+  width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff;
+  font-size: 17px; display: grid; place-items: center; padding: 0;
+}
+.preset-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.preset-row .btn { padding: 4px 10px; font-size: 12px; border-radius: 14px; }
+.preset-row .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.hr { border-top: 1px solid var(--border); margin: 8px 0; }
+.sub-title { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.err-msg { color: var(--danger); font-size: 13px; min-height: 18px; }
+
+/* runs */
+.run-row {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.run-row .top { display: flex; justify-content: space-between; align-items: center; }
+.run-status { font-size: 12px; border-radius: 6px; padding: 1px 8px; }
+.run-status.pending, .run-status.running { background: var(--accent-soft); color: var(--accent); }
+.run-status.completed { background: rgba(59,165,93,.15); color: var(--ok); }
+.run-status.failed { background: rgba(224,72,62,.15); color: var(--danger); }
+.run-row .meta { font-size: 12px; color: var(--muted); }
+.run-row .err { font-size: 12px; color: var(--danger); word-break: break-all; }
+
+/* search */
+.search-grid { display: flex; gap: 8px; }
+.search-grid input[type="text"] { flex: 1; }
+.search-filters { display: flex; gap: 8px; }
+.search-results { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.search-result {
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; cursor: pointer;
+}
+.search-result:hover { border-color: var(--accent); }
+.search-result .meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.search-result .meta .overdue { color: var(--danger); }
+
+/* source info */
+.si-images { display: flex; gap: 8px; flex-wrap: wrap; }
+.si-images img {
+  width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border);
+}
+.si-item { font-size: 13px; padding: 6px 10px; background: var(--bg); border-radius: 8px; }
+
+/* ---------- 右键菜单 ---------- */
+#context-menu {
+  position: fixed; z-index: 80; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: var(--shadow); padding: 6px; display: none; min-width: 140px;
+}
+#context-menu button { display: block; width: 100%; text-align: left; padding: 8px 12px; border-radius: 8px; }
+#context-menu button:hover { background: var(--accent-soft); color: var(--accent); }
+#context-menu button.danger:hover { color: var(--danger); }
+
+/* ---------- toast ---------- */
+#toasts { position: fixed; right: 16px; bottom: 16px; z-index: 90; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 10px; box-shadow: var(--shadow); padding: 10px 14px; max-width: 320px;
+  animation: slide-in .2s ease;
+}
+.toast.error { border-left-color: var(--danger); }
+.toast.ok { border-left-color: var(--ok); }
+@keyframes slide-in { from { transform: translateX(30px); opacity: 0; } }
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<div id="topbar" class="hidden">
+  <div id="logo" title="NekoTodo"></div>
+  <div id="add-wrap" style="position:relative">
+    <button class="icon-btn" id="btn-add" title="AI 创建任务">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <div id="add-dropdown">
+      <button id="btn-manual-add">手动添加</button>
+    </div>
+  </div>
+  <button class="icon-btn" id="btn-theme" title="切换昼夜模式">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+  </button>
+  <button class="icon-btn" id="btn-search" title="搜索">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+  </button>
+  <button class="icon-btn" id="btn-runs" title="拆解进度">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    <span id="runs-badge"></span>
+  </button>
+  <button class="icon-btn" id="btn-account" title="账户管理">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6"/></svg>
+  </button>
+</div>
+
+<!-- 主体 -->
+<div id="app" class="hidden">
+  <div id="sidebar"><div id="category-list"></div></div>
+  <div id="main">
+    <div id="list-view"></div>
+    <canvas id="map-canvas" class="hidden"></canvas>
+  </div>
+</div>
+
+<button id="view-toggle" class="hidden">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
+  <span id="view-toggle-label">源映射模式</span>
+</button>
+
+<!-- 登录/注册 -->
+<div class="modal-mask" id="login-mask">
+  <div class="modal">
+    <h3 id="login-title">登录 NekoTodo</h3>
+    <div class="modal-body">
+      <div class="preset-row" style="margin-bottom:4px">
+        <button class="btn active" id="tab-login">登录</button>
+        <button class="btn" id="tab-register">注册</button>
+      </div>
+      <div class="field"><label>后端地址</label><input id="login-api" placeholder="http://127.0.0.1:8000"></div>
+      <div class="field"><label>用户名</label><input id="login-username" autocomplete="username"></div>
+      <div class="field"><label>密码</label><input id="login-password" type="password" autocomplete="current-password"></div>
+      <div class="err-msg" id="login-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn primary" id="login-submit">登录</button>
+    </div>
+  </div>
+</div>
+
+<!-- AI 创建任务 -->
+<div class="modal-mask" id="ai-mask">
+  <div class="modal">
+    <button class="modal-close" data-close="ai-mask">✕</button>
+    <h3>AI 创建任务</h3>
+    <div class="modal-body">
+      <textarea id="ai-content" rows="6" placeholder="粘贴作业清单 / 任务描述,要求(截止时间、分类等)直接写在内容里…"></textarea>
+      <div class="field">
+        <label>图片(可选,多张)</label>
+        <input type="file" id="ai-files" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
+      </div>
+      <div class="err-msg" id="ai-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn check" id="ai-submit" title="提交">✓</button>
+    </div>
+  </div>
+</div>
+
+<!-- 手动创建 / 编辑任务 -->
+<div class="modal-mask" id="task-mask">
+  <div class="modal">
+    <button class="modal-close" data-close="task-mask">✕</button>
+    <h3 id="task-title">创建任务</h3>
+    <div class="modal-body">
+      <div class="field"><label>任务描述</label><input id="task-desc"></div>
+      <div class="field">
+        <label>截止日期</label>
+        <div class="preset-row" id="deadline-presets">
+          <button class="btn" data-preset="tonight">今晚</button>
+          <button class="btn" data-preset="tomorrow">明天</button>
+          <button class="btn" data-preset="3d">三天后</button>
+          <button class="btn" data-preset="7d">一周后</button>
+          <button class="btn" data-preset="clear">清除</button>
+        </div>
+        <input type="datetime-local" id="task-deadline" style="margin-top:6px">
+      </div>
+      <div class="field">
+        <label>分类</label>
+        <input id="task-category" list="category-datalist" placeholder="选择已有分类或输入新分类">
+        <datalist id="category-datalist"></datalist>
+      </div>
+      <div class="field"><label>details(进度细节)</label><textarea id="task-details" rows="2"></textarea></div>
+      <div class="err-msg" id="task-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn check" id="task-submit" title="提交">✓</button>
+    </div>
+  </div>
+</div>
+
+<!-- 账户管理 -->
+<div class="modal-mask" id="account-mask">
+  <div class="modal">
+    <button class="modal-close" data-close="account-mask">✕</button>
+    <h3>账户管理</h3>
+    <div class="modal-body">
+      <div class="sub-title">偏好设置</div>
+      <div class="field"><label>提示词模板</label><textarea id="acc-prompt" rows="4" placeholder="留空使用内置模板"></textarea></div>
+      <div class="field"><label>时区</label><input id="acc-timezone" placeholder="如 Asia/Shanghai"></div>
+      <div style="display:flex;justify-content:flex-end">
+        <button class="btn check" id="acc-save" title="保存偏好">✓</button>
+      </div>
+      <div class="hr"></div>
+      <div class="sub-title">修改密码</div>
+      <div class="field"><label>原密码</label><input type="password" id="acc-old-pw"></div>
+      <div class="field"><label>新密码(至少 8 位)</label><input type="password" id="acc-new-pw"></div>
+      <div style="display:flex;justify-content:flex-end"><button class="btn" id="acc-change-pw">修改密码</button></div>
+      <div class="hr"></div>
+      <div class="sub-title">危险操作</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" id="acc-revoke">撤销全部 token</button>
+        <button class="btn danger" id="acc-delete">注销账户</button>
+      </div>
+      <div class="err-msg" id="acc-error"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 拆解进度 -->
+<div class="modal-mask" id="runs-mask">
+  <div class="modal">
+    <button class="modal-close" data-close="runs-mask">✕</button>
+    <h3>拆解任务进度</h3>
+    <div class="modal-body" id="runs-list"></div>
+  </div>
+</div>
+
+<!-- 搜索 -->
+<div class="modal-mask" id="search-mask">
+  <div class="modal wide">
+    <button class="modal-close" data-close="search-mask">✕</button>
+    <h3>搜索任务</h3>
+    <div class="modal-body">
+      <div class="search-grid">
+        <input type="text" id="search-text" placeholder="输入文本…">
+        <button class="btn primary" id="search-go">搜索</button>
+      </div>
+      <div class="search-filters">
+        <select id="search-category"><option value="">全部分类</option></select>
+        <input type="date" id="search-from" title="开始日期">
+        <input type="date" id="search-to" title="结束日期">
+        <select id="search-status">
+          <option value="">全部</option>
+          <option value="incomplete">未完成</option>
+          <option value="completed">已完成</option>
+        </select>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 源信息详情 -->
+<div class="modal-mask" id="source-mask">
+  <div class="modal wide">
+    <button class="modal-close" data-close="source-mask">✕</button>
+    <h3 id="source-title">源信息</h3>
+    <div class="modal-body">
+      <div class="field"><label>内容(修改后保存将触发重新拆解)</label><textarea id="source-content" rows="5"></textarea></div>
+      <div class="field" id="source-images-wrap"><label>图片</label><div class="si-images" id="source-images"></div></div>
+      <div class="field"><label>条目</label><div id="source-items" style="display:flex;flex-direction:column;gap:6px"></div></div>
+      <div class="err-msg" id="source-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn danger" id="source-delete">删除源信息</button>
+      <button class="btn primary" id="source-save">保存并重拆</button>
+    </div>
+  </div>
+</div>
+
+<!-- 通用确认 -->
+<div class="modal-mask" id="confirm-mask">
+  <div class="modal" style="width:360px">
+    <button class="modal-close" data-close="confirm-mask">✕</button>
+    <h3 id="confirm-title">确认</h3>
+    <div class="modal-body">
+      <div id="confirm-text" style="word-break:break-word"></div>
+      <div class="field hidden" id="confirm-pw-wrap"><label>请输入当前密码</label><input type="password" id="confirm-pw"></div>
+      <div class="err-msg" id="confirm-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" data-close="confirm-mask">取消</button>
+      <button class="btn danger" id="confirm-ok">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- 右键菜单 -->
+<div id="context-menu"></div>
+
+<!-- toast -->
+<div id="toasts"></div>
+
+<script>
+"use strict";
+
+/* ================= 工具 ================= */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function setCookie(name, value) {
+  try { document.cookie = `${name}=${encodeURIComponent(value)};path=/;max-age=315360000;SameSite=Lax`; } catch {}
+  try { localStorage.setItem(name, value); } catch {}
+}
+function getCookie(name) {
+  const m = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
+  if (m) return decodeURIComponent(m[1]);
+  try { return localStorage.getItem(name) || ""; } catch { return ""; }
+}
+function delCookie(name) {
+  try { document.cookie = `${name}=;path=/;max-age=0`; } catch {}
+  try { localStorage.removeItem(name); } catch {}
+}
+
+function toast(msg, kind = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = msg;
+  $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+/* ================= 时间(UTC <-> 用户时区) ================= */
+function parseUTC(s) {
+  if (!s) return null;
+  if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) s += "Z";
+  return new Date(s);
+}
+function tz() { return state.prefs.timezone || "UTC"; }
+function fmtTime(s) {
+  const d = parseUTC(s);
+  if (!d) return "";
+  try {
+    return new Intl.DateTimeFormat("zh-CN", {
+      timeZone: tz(), month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(d);
+  } catch { return d.toLocaleString(); }
+}
+function tzOffsetMs(date, timeZone) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(date).map((p) => [p.type, p.value])
+  );
+  return Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second) - date.getTime();
+}
+function wallToUTC(wall, timeZone) {
+  const guess = new Date(wall + ":00Z");
+  const off1 = tzOffsetMs(guess, timeZone);
+  let utc = new Date(guess.getTime() - off1);
+  const off2 = tzOffsetMs(utc, timeZone);
+  if (off2 !== off1) utc = new Date(guess.getTime() - off2);
+  return utc;
+}
+function utcToWall(date, timeZone) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
+    }).formatToParts(date).map((p) => [p.type, p.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day}T${String(parts.hour % 24).padStart(2, "0")}:${parts.minute}`;
+}
+function addDaysToWall(wall, n) {
+  const [d, t] = wall.split("T");
+  const dt = new Date(d + "T00:00:00Z");
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10) + "T" + t;
+}
+
+/* ================= 状态 ================= */
+const state = {
+  api: "", token: "",
+  tasks: [], sourceInfos: [], runs: [],
+  siDetails: {}, siDetailTime: {},
+  prefs: { timezone: "UTC", custom_prompt_template: null },
+  view: "list",
+  category: "All",
+  editingTaskId: null,
+  highlightItemId: null,
+  prevRunStatus: {},
+};
+const hasActiveRun = () => state.runs.some((r) => r.status === "pending" || r.status === "running");
+
+/* ================= API ================= */
+class ApiError extends Error { constructor(status, detail) { super(detail); this.status = status; } }
+async function api(path, { method = "GET", body, form } = {}) {
+  const headers = {};
+  if (state.token) headers["Authorization"] = "Bearer " + state.token;
+  let payload;
+  if (form) payload = form;
+  else if (body !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
+  const res = await fetch(state.api.replace(/\/$/, "") + path, { method, headers, body: payload });
+  const isAuthEndpoint = path.startsWith("/auth/login") || path.startsWith("/auth/register");
+  if (res.status === 401 && !isAuthEndpoint) { logout(); throw new ApiError(401, "登录已失效,请重新登录"); }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch {}
+    throw new ApiError(res.status, detail);
+  }
+  const ct = res.headers.get("content-type") || "";
+  return ct.includes("json") ? res.json() : res;
+}
+
+/* ================= 轮询 ================= */
+let pollTimer = null;
+async function refreshAll() {
+  try {
+    const [tasks, sourceInfos, runs] = await Promise.all([
+      api("/tasks"), api("/source-infos"), api("/runs"),
+    ]);
+    state.tasks = tasks; state.sourceInfos = sourceInfos; state.runs = runs;
+    for (const r of runs) {
+      const prev = state.prevRunStatus[r.id];
+      if ((prev === "pending" || prev === "running") && r.status === "completed")
+        toast(`拆解完成:新建 ${r.created_task_ids.length} 个任务`, "ok");
+      if ((prev === "pending" || prev === "running") && r.status === "failed")
+        toast(`拆解失败:${r.error || "未知原因"}`, "error");
+      state.prevRunStatus[r.id] = r.status;
+    }
+    updateBadge();
+    if (state.view === "map") { await refreshSiDetails(); MapView.draw(); }
+    else renderList();
+    renderSidebar();
+    if ($("runs-mask").classList.contains("open")) renderRuns();
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 401)) console.error(e);
+  }
+  schedulePoll();
+}
+async function refreshSiDetails() {
+  await Promise.all(state.sourceInfos.map(async (si) => {
+    try { state.siDetails[si.id] = await api(`/source-infos/${si.id}`); } catch {}
+  }));
+}
+function schedulePoll() {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(refreshAll, hasActiveRun() ? 2000 : 10000);
+}
+
+/* ================= 顶栏 / 通用窗口 ================= */
+function openModal(id) { $(id).classList.add("open"); }
+function closeModal(id) { $(id).classList.remove("open"); }
+document.querySelectorAll("[data-close]").forEach((b) =>
+  b.addEventListener("click", () => closeModal(b.dataset.close)));
+document.querySelectorAll(".modal-mask").forEach((m) =>
+  m.addEventListener("mousedown", (e) => { if (e.target === m && m.id !== "login-mask") m.classList.remove("open"); }));
+
+function updateBadge() { $("runs-badge").style.display = hasActiveRun() ? "block" : "none"; }
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem("nekotodo-theme", theme);
+}
+$("btn-theme").addEventListener("click", () =>
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+
+/* ================= 登录 / 注册 ================= */
+let loginMode = "login";
+function setLoginMode(mode) {
+  loginMode = mode;
+  $("tab-login").classList.toggle("active", mode === "login");
+  $("tab-register").classList.toggle("active", mode === "register");
+  $("login-title").textContent = mode === "login" ? "登录 NekoTodo" : "注册 NekoTodo";
+  $("login-submit").textContent = mode === "login" ? "登录" : "注册";
+  $("login-error").textContent = "";
+}
+$("tab-login").addEventListener("click", () => setLoginMode("login"));
+$("tab-register").addEventListener("click", () => setLoginMode("register"));
+$("login-submit").addEventListener("click", submitLogin);
+$("login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") submitLogin(); });
+
+async function submitLogin() {
+  const apiUrl = $("login-api").value.trim();
+  const username = $("login-username").value.trim();
+  const password = $("login-password").value;
+  $("login-error").textContent = "";
+  if (!apiUrl || !username || !password) { $("login-error").textContent = "请填写完整"; return; }
+  state.api = apiUrl; state.token = "";
+  try {
+    const res = await api(loginMode === "login" ? "/auth/login" : "/auth/register",
+      { method: "POST", body: { username, password } });
+    setCookie("nekotodo_api", apiUrl);
+    setCookie("nekotodo_token", res.token);
+    state.token = res.token;
+    closeModal("login-mask");
+    startApp();
+  } catch (e) {
+    if (loginMode === "register" && e.status === 403) $("login-error").textContent = "该服务器未开放公开注册,请联系管理员";
+    else if (loginMode === "register" && e.status === 409) $("login-error").textContent = "用户名已存在";
+    else if (e.status === 401) $("login-error").textContent = "用户名或密码错误";
+    else $("login-error").textContent = e.message || "连接失败";
+  }
+}
+function logout() {
+  state.token = "";
+  delCookie("nekotodo_token");
+  clearTimeout(pollTimer);
+  $("topbar").classList.add("hidden");
+  $("app").classList.add("hidden");
+  $("view-toggle").classList.add("hidden");
+  openModal("login-mask");
+}
+
+/* ================= 启动 ================= */
+async function startApp() {
+  $("topbar").classList.remove("hidden");
+  $("app").classList.remove("hidden");
+  $("view-toggle").classList.remove("hidden");
+  try { state.prefs = await api("/me/preferences"); } catch {}
+  applyView();
+  await refreshAll();
+}
+
+/* ================= 侧栏 / 列表 ================= */
+function categories() {
+  const set = new Map();
+  for (const t of state.tasks) if (t.category) set.set(t.category, (set.get(t.category) || 0) + 1);
+  return [...set.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh-CN"));
+}
+function renderSidebar() {
+  const list = $("category-list");
+  list.innerHTML = "";
+  const all = document.createElement("div");
+  all.className = "cat-item" + (state.category === "All" ? " active" : "");
+  all.innerHTML = `<span>全部</span><span class="n">${state.tasks.length}</span>`;
+  all.addEventListener("click", () => { state.category = "All"; renderSidebar(); renderList(); });
+  list.appendChild(all);
+  for (const [c, n] of categories()) {
+    const el = document.createElement("div");
+    el.className = "cat-item" + (state.category === c ? " active" : "");
+    el.innerHTML = `<span>${esc(c)}</span><span class="n">${n}</span>`;
+    el.addEventListener("click", () => { state.category = c; renderSidebar(); renderList(); });
+    list.appendChild(el);
+  }
+}
+function visibleTasks() {
+  return state.category === "All" ? state.tasks : state.tasks.filter((t) => t.category === state.category);
+}
+function isOverdue(t) {
+  return t.status !== "completed" && t.deadline && parseUTC(t.deadline) < new Date();
+}
+function taskCard(t) {
+  const el = document.createElement("div");
+  el.className = "task-card" + (t.status === "completed" ? " done" : "");
+  el.dataset.id = t.id;
+  el.innerHTML = `
+    <div class="desc">${esc(t.description)}</div>
+    ${t.details ? `<div class="details">${esc(t.details)}</div>` : ""}
+    ${t.category ? `<span class="chip">${esc(t.category)}</span>` : ""}
+    ${t.deadline ? `<div class="deadline ${isOverdue(t) ? "overdue" : ""}">${fmtTime(t.deadline)}${isOverdue(t) ? " 已过期" : ""}</div>` : ""}
+    <div class="task-check ${t.status === "completed" ? "checked" : ""}">${t.status === "completed" ? "✓" : ""}</div>`;
+  el.querySelector(".task-check").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      await api(`/tasks/${t.id}`, { method: "PATCH", body: { status: t.status === "completed" ? "incomplete" : "completed" } });
+      refreshAll();
+    } catch (err) { toast(err.message, "error"); }
+  });
+  el.addEventListener("contextmenu", (e) => { e.preventDefault(); showContextMenu(e, t); });
+  if (t.status !== "completed") {
+    el.draggable = true;
+    el.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", String(t.id)); });
+    el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("drag-over"); });
+    el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
+    el.addEventListener("drop", async (e) => {
+      e.preventDefault(); el.classList.remove("drag-over");
+      const dragId = +e.dataTransfer.getData("text/plain");
+      if (dragId === t.id) return;
+      await moveTask(dragId, t.id);
+    });
+  }
+  return el;
+}
+async function moveTask(dragId, beforeId) {
+  const rest = state.tasks.filter((x) => x.id !== dragId).sort((a, b) => a.priority - b.priority);
+  const idx = rest.findIndex((x) => x.id === beforeId);
+  if (idx < 0) return;
+  try {
+    await api(`/tasks/${dragId}/move`, { method: "POST", body: { to_position: idx + 1 } });
+    refreshAll();
+  } catch (err) { toast(err.message, "error"); }
+}
+let completedCollapsed = localStorage.getItem("nekotodo-completed-collapsed") === "1";
+function renderList() {
+  const view = $("list-view");
+  view.innerHTML = "";
+  const tasks = visibleTasks().slice().sort((a, b) => a.priority - b.priority);
+  const incomplete = tasks.filter((t) => t.status !== "completed");
+  const completed = tasks.filter((t) => t.status === "completed");
+
+  const t1 = document.createElement("div");
+  t1.className = "section-title";
+  t1.textContent = `未完成 (${incomplete.length})`;
+  view.appendChild(t1);
+  if (!incomplete.length) view.appendChild(Object.assign(document.createElement("div"), { className: "empty-hint", textContent: "没有未完成的任务" }));
+  const incWrap = document.createElement("div");
+  for (const t of incomplete) incWrap.appendChild(taskCard(t));
+  incWrap.addEventListener("dragover", (e) => e.preventDefault());
+  incWrap.addEventListener("drop", async (e) => {
+    if (e.target !== incWrap) return;
+    e.preventDefault();
+    const dragId = +e.dataTransfer.getData("text/plain");
+    const rest = state.tasks.filter((x) => x.id !== dragId).sort((a, b) => a.priority - b.priority);
+    const lastInc = incomplete.filter((x) => x.id !== dragId).pop();
+    if (!lastInc) return;
+    const idx = rest.findIndex((x) => x.id === lastInc.id);
+    try {
+      await api(`/tasks/${dragId}/move`, { method: "POST", body: { to_position: idx + 2 } });
+      refreshAll();
+    } catch (err) { toast(err.message, "error"); }
+  });
+  view.appendChild(incWrap);
+
+  const divider = document.createElement("div");
+  divider.className = "divider";
+  divider.textContent = `已完成 (${completed.length}) ${completedCollapsed ? "▸" : "▾"}`;
+  divider.addEventListener("click", () => {
+    completedCollapsed = !completedCollapsed;
+    localStorage.setItem("nekotodo-completed-collapsed", completedCollapsed ? "1" : "0");
+    renderList();
+  });
+  view.appendChild(divider);
+  if (!completedCollapsed) {
+    if (!completed.length) view.appendChild(Object.assign(document.createElement("div"), { className: "empty-hint", textContent: "暂无已完成任务" }));
+    for (const t of completed) view.appendChild(taskCard(t));
+  }
+}
+
+/* ================= 右键菜单 ================= */
+function showContextMenu(e, task) {
+  const menu = $("context-menu");
+  menu.innerHTML = "";
+  const items = [
+    ["编辑内容", () => openTaskModal(task, "desc")],
+    ["修改日期", () => openTaskModal(task, "deadline")],
+    ["修改分类", () => openTaskModal(task, "category")],
+    ["删除", () => confirmDeleteTask(task), "danger"],
+  ];
+  for (const [label, fn, cls] of items) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener("click", () => { menu.style.display = "none"; fn(); });
+    menu.appendChild(b);
+  }
+  menu.style.display = "block";
+  menu.style.left = Math.min(e.clientX, innerWidth - 160) + "px";
+  menu.style.top = Math.min(e.clientY, innerHeight - menu.offsetHeight - 10) + "px";
+}
+document.addEventListener("click", () => { $("context-menu").style.display = "none"; });
+
+function confirmDeleteTask(task) {
+  const extra = task.source_item_id
+    ? "\n注意:若这是其源信息的最后一个任务,该源信息及其条目将被连带清理。"
+    : "";
+  showConfirm(`确定删除任务「${task.description}」?${extra}`, async () => {
+    try {
+      await api(`/tasks/${task.id}`, { method: "DELETE" });
+      state.siDetails = {};
+      toast("已删除", "ok");
+      refreshAll();
+    } catch (err) { toast(err.message, "error"); }
+  });
+}
+
+/* ================= 通用确认窗 ================= */
+let confirmAction = null;
+function showConfirm(text, onOk, { needPassword = false, title = "确认" } = {}) {
+  $("confirm-title").textContent = title;
+  $("confirm-text").textContent = text;
+  $("confirm-error").textContent = "";
+  $("confirm-pw").value = "";
+  $("confirm-pw-wrap").classList.toggle("hidden", !needPassword);
+  confirmAction = onOk;
+  openModal("confirm-mask");
+}
+$("confirm-ok").addEventListener("click", async () => {
+  if (!confirmAction) return;
+  try {
+    await confirmAction($("confirm-pw").value);
+    closeModal("confirm-mask");
+  } catch (e) { $("confirm-error").textContent = e.message; }
+});
+
+/* ================= 任务创建 / 编辑窗 ================= */
+function fillCategoryDatalist() {
+  $("category-datalist").innerHTML = categories().map(([c]) => `<option value="${esc(c)}">`).join("");
+}
+function openTaskModal(task, focus) {
+  state.editingTaskId = task ? task.id : null;
+  $("task-title").textContent = task ? "编辑任务" : "创建任务";
+  $("task-error").textContent = "";
+  $("task-desc").value = task ? task.description : "";
+  $("task-category").value = task ? (task.category || "") : "";
+  $("task-details").value = task ? (task.details || "") : "";
+  $("task-deadline").value = task && task.deadline ? utcToWall(parseUTC(task.deadline), tz()) : "";
+  document.querySelectorAll("#deadline-presets .btn").forEach((b) => b.classList.remove("active"));
+  fillCategoryDatalist();
+  openModal("task-mask");
+  const map = { desc: "task-desc", deadline: "task-deadline", category: "task-category" };
+  if (focus && map[focus]) $(map[focus]).focus();
+}
+document.querySelectorAll("#deadline-presets .btn").forEach((b) =>
+  b.addEventListener("click", () => {
+    const p = b.dataset.preset;
+    document.querySelectorAll("#deadline-presets .btn").forEach((x) => x.classList.remove("active"));
+    if (p === "clear") { $("task-deadline").value = ""; return; }
+    b.classList.add("active");
+    const nowWall = utcToWall(new Date(), tz());
+    let wall;
+    if (p === "tonight") wall = nowWall.slice(0, 10) + "T23:59";
+    else if (p === "tomorrow") wall = addDaysToWall(nowWall.slice(0, 10) + "T23:59", 1);
+    else if (p === "3d") wall = addDaysToWall(nowWall, 3);
+    else wall = addDaysToWall(nowWall, 7);
+    $("task-deadline").value = wall;
+  }));
+$("task-deadline").addEventListener("input", () =>
+  document.querySelectorAll("#deadline-presets .btn").forEach((x) => x.classList.remove("active")));
+
+$("task-submit").addEventListener("click", async () => {
+  const desc = $("task-desc").value.trim();
+  $("task-error").textContent = "";
+  if (!desc) { $("task-error").textContent = "描述不能为空"; return; }
+  const wall = $("task-deadline").value;
+  const deadline = wall ? wallToUTC(wall, tz()).toISOString() : null;
+  const category = $("task-category").value.trim() || null;
+  const details = $("task-details").value;
+  try {
+    if (state.editingTaskId) {
+      await api(`/tasks/${state.editingTaskId}`, {
+        method: "PATCH",
+        body: { description: desc, deadline, category, details },
+      });
+    } else {
+      const body = { description: desc, deadline, category };
+      await api("/tasks", { method: "POST", body });
+    }
+    closeModal("task-mask");
+    toast(state.editingTaskId ? "已保存" : "已创建", "ok");
+    refreshAll();
+  } catch (e) { $("task-error").textContent = e.message; }
+});
+
+/* ================= AI 创建 ================= */
+// 「添加」悬停下拉:悬停立即显示,移开后延时 0.5s 隐藏(期间可移入菜单),
+// 避免按钮到菜单之间的小空隙造成菜单闪烁消失。
+const addWrap = $("add-wrap"), addDropdown = $("add-dropdown");
+let addHideTimer = null;
+function showAddDropdown() { clearTimeout(addHideTimer); addDropdown.classList.add("show"); }
+function scheduleHideAddDropdown() { addHideTimer = setTimeout(() => addDropdown.classList.remove("show"), 500); }
+addWrap.addEventListener("mouseenter", showAddDropdown);
+addWrap.addEventListener("mouseleave", scheduleHideAddDropdown);
+addDropdown.addEventListener("mouseenter", showAddDropdown);
+addDropdown.addEventListener("mouseleave", scheduleHideAddDropdown);
+$("btn-add").addEventListener("click", () => { $("ai-error").textContent = ""; openModal("ai-mask"); });
+$("btn-manual-add").addEventListener("click", () => { addDropdown.classList.remove("show"); openTaskModal(null); });
+$("ai-submit").addEventListener("click", async () => {
+  const content = $("ai-content").value.trim();
+  const files = $("ai-files").files;
+  $("ai-error").textContent = "";
+  if (!content && !files.length) { $("ai-error").textContent = "请输入内容或添加图片"; return; }
+  const form = new FormData();
+  if (content) form.append("content", content);
+  for (const f of files) form.append("files", f);
+  try {
+    await api("/source-infos", { method: "POST", form });
+    closeModal("ai-mask");
+    $("ai-content").value = ""; $("ai-files").value = "";
+    toast("已提交,拆解中…", "ok");
+    refreshAll();
+  } catch (e) { $("ai-error").textContent = e.message; }
+});
+
+/* ================= 账户管理 ================= */
+$("btn-account").addEventListener("click", async () => {
+  $("acc-error").textContent = "";
+  try { state.prefs = await api("/me/preferences"); } catch {}
+  $("acc-prompt").value = state.prefs.custom_prompt_template || "";
+  $("acc-timezone").value = state.prefs.timezone || "UTC";
+  openModal("account-mask");
+});
+$("acc-save").addEventListener("click", async () => {
+  $("acc-error").textContent = "";
+  try {
+    state.prefs = await api("/me/preferences", {
+      method: "PATCH",
+      body: {
+        custom_prompt_template: $("acc-prompt").value || null,
+        timezone: $("acc-timezone").value.trim() || "UTC",
+      },
+    });
+    toast("偏好已保存", "ok");
+    renderList();
+  } catch (e) { $("acc-error").textContent = e.message; }
+});
+$("acc-change-pw").addEventListener("click", async () => {
+  $("acc-error").textContent = "";
+  try {
+    await api("/auth/change-password", {
+      method: "POST",
+      body: { old_password: $("acc-old-pw").value, new_password: $("acc-new-pw").value },
+    });
+    toast("密码已修改,请重新登录", "ok");
+    closeModal("account-mask");
+    logout();
+  } catch (e) { $("acc-error").textContent = e.message; }
+});
+$("acc-revoke").addEventListener("click", () =>
+  showConfirm("确定撤销全部 token?所有已登录端点都将失效。", async () => {
+    await api("/auth/revoke-all", { method: "POST" });
+    closeModal("account-mask");
+    logout();
+  }));
+$("acc-delete").addEventListener("click", () =>
+  showConfirm("注销账户不可逆:任务、源信息、文件将全部删除。", async (pw) => {
+    await api("/auth/delete-account", { method: "POST", body: { password: pw } });
+    closeModal("account-mask");
+    logout();
+  }, { needPassword: true, title: "注销账户" }));
+
+/* ================= 拆解进度 ================= */
+$("btn-runs").addEventListener("click", () => { renderRuns(); openModal("runs-mask"); });
+function renderRuns() {
+  const list = $("runs-list");
+  list.innerHTML = "";
+  if (!state.runs.length) {
+    list.innerHTML = `<div class="empty-hint">暂无拆解记录</div>`;
+    return;
+  }
+  const statusText = { pending: "等待中", running: "拆解中", completed: "已完成", failed: "失败" };
+  for (const r of state.runs.slice(0, 30)) {
+    const el = document.createElement("div");
+    el.className = "run-row";
+    el.innerHTML = `
+      <div class="top">
+        <span>#${esc(r.id.slice(0, 8))} · 源信息 #${r.source_info_id}</span>
+        <span class="run-status ${r.status}">${statusText[r.status] || r.status}</span>
+      </div>
+      <div class="meta">${fmtTime(r.created_at)}${r.status === "completed" ? ` · 新建 ${r.created_task_ids.length} 个任务` : ""}</div>
+      ${r.error ? `<div class="err">${esc(r.error)}</div>` : ""}`;
+    list.appendChild(el);
+  }
+}
+
+/* ================= 搜索 ================= */
+$("btn-search").addEventListener("click", () => {
+  const sel = $("search-category");
+  sel.innerHTML = `<option value="">全部分类</option>` +
+    categories().map(([c]) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  openModal("search-mask");
+  runSearch();
+});
+$("search-go").addEventListener("click", runSearch);
+$("search-text").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
+function runSearch() {
+  const q = $("search-text").value.trim().toLowerCase();
+  const cat = $("search-category").value;
+  const from = $("search-from").value;
+  const to = $("search-to").value;
+  const st = $("search-status").value;
+  const results = state.tasks.filter((t) => {
+    if (q && !(t.description.toLowerCase().includes(q) || (t.details || "").toLowerCase().includes(q))) return false;
+    if (cat && t.category !== cat) return false;
+    if (st && t.status !== st) return false;
+    if (from || to) {
+      if (!t.deadline) return false;
+      const d = parseUTC(t.deadline);
+      if (from && d < wallToUTC(from + "T00:00", tz())) return false;
+      if (to && d > wallToUTC(to + "T23:59", tz())) return false;
+    }
+    return true;
+  }).sort((a, b) => a.priority - b.priority);
+  const box = $("search-results");
+  box.innerHTML = "";
+  if (!results.length) { box.innerHTML = `<div class="empty-hint">无匹配结果</div>`; return; }
+  for (const t of results) {
+    const el = document.createElement("div");
+    el.className = "search-result";
+    el.innerHTML = `
+      <div>${esc(t.description)}</div>
+      <div class="meta">
+        ${t.category ? esc(t.category) + " · " : ""}${t.status === "completed" ? "已完成" : "未完成"}
+        ${t.deadline ? ` · <span class="${isOverdue(t) ? "overdue" : ""}">${fmtTime(t.deadline)}</span>` : ""}
+      </div>`;
+    el.addEventListener("click", () => { closeModal("search-mask"); openTaskModal(t, "desc"); });
+    box.appendChild(el);
+  }
+}
+
+/* ================= 源信息详情 ================= */
+let currentSourceId = null;
+async function openSourceModal(id) {
+  currentSourceId = id;
+  let d = state.siDetails[id];
+  try { d = state.siDetails[id] = await api(`/source-infos/${id}`); } catch (e) { toast(e.message, "error"); return; }
+  $("source-title").textContent = `源信息 #${id}`;
+  $("source-content").value = d.content || "";
+  $("source-error").textContent = "";
+  const imgWrap = $("source-images");
+  imgWrap.innerHTML = "";
+  $("source-images-wrap").style.display = d.source_images.length ? "" : "none";
+  for (const img of d.source_images) {
+    const el = document.createElement("img");
+    el.alt = img.description || "";
+    el.title = img.description || "";
+    loadImageURL(img.file_uuid).then((url) => { if (url) el.src = url; });
+    imgWrap.appendChild(el);
+  }
+  const items = $("source-items");
+  items.innerHTML = d.source_items.length
+    ? ""
+    : `<div class="empty-hint">暂无条目</div>`;
+  for (const it of d.source_items) {
+    const el = document.createElement("div");
+    el.className = "si-item";
+    el.textContent = it.content;
+    items.appendChild(el);
+  }
+  openModal("source-mask");
+}
+$("source-save").addEventListener("click", async () => {
+  $("source-error").textContent = "";
+  try {
+    await api(`/source-infos/${currentSourceId}`, {
+      method: "PATCH", body: { content: $("source-content").value },
+    });
+    closeModal("source-mask");
+    toast("已保存,重新拆解中…", "ok");
+    refreshAll();
+  } catch (e) {
+    $("source-error").textContent = e.status === 409 ? "该源信息已有进行中的拆解,请稍后再试" : e.message;
+  }
+});
+$("source-delete").addEventListener("click", () =>
+  showConfirm("删除源信息将级联删除其条目、拆出的全部任务与拆解记录。", async () => {
+    await api(`/source-infos/${currentSourceId}`, { method: "DELETE" });
+    delete state.siDetails[currentSourceId];
+    closeModal("source-mask");
+    toast("已删除", "ok");
+    refreshAll();
+  }, { title: "删除源信息" }));
+
+/* ================= 图片加载(带鉴权) ================= */
+const imageCache = {};   // file_uuid -> Image
+const imageURLCache = {}; // file_uuid -> objectURL
+async function loadImageURL(uuid) {
+  if (imageURLCache[uuid]) return imageURLCache[uuid];
+  try {
+    const res = await fetch(state.api.replace(/\/$/, "") + `/files/${uuid}`, {
+      headers: { Authorization: "Bearer " + state.token },
+    });
+    if (!res.ok) return null;
+    const url = URL.createObjectURL(await res.blob());
+    imageURLCache[uuid] = url;
+    return url;
+  } catch { return null; }
+}
+function loadImage(uuid) {
+  if (imageCache[uuid]) return imageCache[uuid];
+  const img = new Image();
+  imageCache[uuid] = img;
+  loadImageURL(uuid).then((url) => {
+    if (!url) return;
+    img.onload = () => MapView.draw();
+    img.src = url;
+  });
+  return img;
+}
+
+/* ================= 星图 ================= */
+const MapView = {
+  tx: 0, ty: 0, k: 1, nodes: [], edges: [],
+  dragging: false, moved: false, lastX: 0, lastY: 0,
+  canvas: null, ctx: null,
+
+  init() {
+    this.canvas = $("map-canvas");
+    this.ctx = this.canvas.getContext("2d");
+    const resize = () => {
+      const r = this.canvas.getBoundingClientRect();
+      this.canvas.width = r.width * devicePixelRatio;
+      this.canvas.height = r.height * devicePixelRatio;
+      this.draw();
+    };
+    new ResizeObserver(resize).observe(this.canvas);
+    this.canvas.addEventListener("mousedown", (e) => {
+      this.dragging = true; this.moved = false;
+      this.lastX = e.clientX; this.lastY = e.clientY;
+    });
+    addEventListener("mousemove", (e) => {
+      if (!this.dragging) return;
+      const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY;
+      if (Math.abs(dx) + Math.abs(dy) > 3) this.moved = true;
+      this.tx += dx; this.ty += dy;
+      this.lastX = e.clientX; this.lastY = e.clientY;
+      this.draw();
+    });
+    addEventListener("mouseup", (e) => {
+      if (this.dragging && !this.moved && e.target === this.canvas) this.onClick(e);
+      this.dragging = false;
+    });
+    this.canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const rect = this.canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const k2 = Math.min(4, Math.max(0.2, this.k * factor));
+      this.tx = mx - (mx - this.tx) * (k2 / this.k);
+      this.ty = my - (my - this.ty) * (k2 / this.k);
+      this.k = k2;
+      this.draw();
+    }, { passive: false });
+    this.canvas.addEventListener("mousemove", (e) => {
+      const n = this.hitTest(e);
+      this.canvas.style.cursor = n ? "pointer" : "default";
+      this.canvas.title = n ? n.fullLabel : "";
+    });
+  },
+
+  layout() {
+    this.nodes = []; this.edges = [];
+    const details = state.sourceInfos.map((si) => state.siDetails[si.id]).filter(Boolean);
+    if (!details.length) return;
+    const cell = 420, cols = Math.max(1, Math.ceil(Math.sqrt(details.length)));
+    details.forEach((d, i) => {
+      const cx = (i % cols) * cell + cell / 2;
+      const cy = Math.floor(i / cols) * cell + cell / 2;
+      const star = { kind: "star", id: d.id, x: cx, y: cy, r: 30, label: (d.content || "(图片)").slice(0, 12), fullLabel: d.content || "(图片源信息)", data: d };
+      this.nodes.push(star);
+      const items = d.source_items || [];
+      const tasksByItem = {};
+      for (const t of d.tasks || []) {
+        if (t.source_item_id == null) continue;
+        (tasksByItem[t.source_item_id] = tasksByItem[t.source_item_id] || []).push(t);
+      }
+      const r1 = 130;
+      items.forEach((it, j) => {
+        const a = (j / Math.max(1, items.length)) * Math.PI * 2 - Math.PI / 2;
+        const ix = cx + Math.cos(a) * r1, iy = cy + Math.sin(a) * r1;
+        const isImg = it.source_image_id != null;
+        const img = isImg ? (d.source_images || []).find((g) => g.id === it.source_image_id) : null;
+        const node = {
+          kind: "item", id: it.id, x: ix, y: iy, r: isImg ? 38 : 18,
+          label: it.content.slice(0, 10), fullLabel: it.content,
+          data: it, image: img ? loadImage(img.file_uuid) : null,
+        };
+        this.nodes.push(node);
+        this.edges.push([star, node]);
+        const ts = tasksByItem[it.id] || [];
+        ts.forEach((t, m) => {
+          const spread = 0.9, a2 = a + (ts.length === 1 ? 0 : (m / (ts.length - 1) - 0.5) * spread);
+          const tnode = {
+            kind: "task", id: t.id, x: ix + Math.cos(a2) * 85, y: iy + Math.sin(a2) * 85,
+            r: 11, label: t.description.slice(0, 8), fullLabel: t.description, data: t, itemId: it.id,
+          };
+          this.nodes.push(tnode);
+          this.edges.push([node, tnode]);
+        });
+      });
+    });
+  },
+
+  cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); },
+
+  draw() {
+    if (!this.ctx || state.view !== "map") return;
+    this.layout();
+    const { ctx, canvas } = this;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const w = canvas.width / devicePixelRatio, h = canvas.height / devicePixelRatio;
+    ctx.fillStyle = this.cssVar("--map-bg");
+    ctx.fillRect(0, 0, w, h);
+    if (!this.nodes.length) {
+      ctx.fillStyle = this.cssVar("--muted");
+      ctx.font = "14px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("暂无源信息,点击右上角 + 创建", w / 2, h / 2);
+      return;
+    }
+    ctx.save();
+    ctx.translate(this.tx, this.ty);
+    ctx.scale(this.k, this.k);
+    const cBorder = this.cssVar("--border"), cMuted = this.cssVar("--muted"),
+          cAccent = this.cssVar("--accent"), cFg = this.cssVar("--fg"), cOk = this.cssVar("--ok");
+
+    ctx.strokeStyle = cBorder; ctx.lineWidth = 1 / this.k;
+    for (const [a, b] of this.edges) {
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    for (const n of this.nodes) {
+      const hl = state.highlightItemId && (n.id === state.highlightItemId || n.itemId === state.highlightItemId);
+      if (n.kind === "star") {
+        const g = ctx.createRadialGradient(n.x - 8, n.y - 8, 4, n.x, n.y, n.r + 14);
+        g.addColorStop(0, cAccent); g.addColorStop(1, "transparent");
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 14, 0, 7); ctx.fill();
+        ctx.fillStyle = cAccent;
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r * 0.55, 0, 7); ctx.fill();
+        this.label(n, cFg);
+      } else if (n.kind === "item") {
+        if (n.image && n.image.complete && n.image.naturalWidth) {
+          ctx.save();
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 7); ctx.clip();
+          ctx.drawImage(n.image, n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
+          ctx.restore();
+          ctx.strokeStyle = hl ? cAccent : cBorder; ctx.lineWidth = hl ? 3 : 1.5;
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 7); ctx.stroke();
+        } else {
+          ctx.fillStyle = this.cssVar("--panel");
+          ctx.strokeStyle = hl ? cAccent : cMuted; ctx.lineWidth = hl ? 3 : 1.5;
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 7); ctx.fill(); ctx.stroke();
+          this.label(n, cMuted);
+        }
+        if (hl) {
+          ctx.strokeStyle = cAccent; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 6, 0, 7); ctx.stroke();
+        }
+      } else {
+        const done = n.data.status === "completed";
+        ctx.fillStyle = done ? cOk : cAccent;
+        ctx.globalAlpha = done ? 0.55 : 1;
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 7); ctx.fill();
+        ctx.globalAlpha = 1;
+        if (hl) {
+          ctx.strokeStyle = cAccent; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 4, 0, 7); ctx.stroke();
+        }
+        this.label(n, done ? cMuted : cFg);
+      }
+    }
+    ctx.restore();
+  },
+
+  label(n, color) {
+    const { ctx } = this;
+    ctx.fillStyle = color;
+    ctx.font = `${11 / this.k}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText(n.label, n.x, n.y + n.r + 14 / this.k);
+  },
+
+  hitTest(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left - this.tx) / this.k;
+    const y = (e.clientY - rect.top - this.ty) / this.k;
+    for (let i = this.nodes.length - 1; i >= 0; i--) {
+      const n = this.nodes[i];
+      const rr = Math.max(n.r, 14);
+      if ((x - n.x) ** 2 + (y - n.y) ** 2 <= rr * rr) return n;
+    }
+    return null;
+  },
+
+  onClick(e) {
+    const n = this.hitTest(e);
+    if (!n) { state.highlightItemId = null; this.draw(); return; }
+    if (n.kind === "task") openTaskModal(n.data, "desc");
+    else if (n.kind === "star") openSourceModal(n.id);
+    else if (n.kind === "item") {
+      state.highlightItemId = state.highlightItemId === n.id ? null : n.id;
+      this.draw();
+    }
+  },
+};
+
+/* ================= 视图切换 ================= */
+function applyView() {
+  const isList = state.view === "list";
+  $("list-view").classList.toggle("hidden", !isList);
+  $("map-canvas").classList.toggle("hidden", isList);
+  $("sidebar").classList.toggle("hidden", !isList);
+  $("view-toggle-label").textContent = isList ? "源映射模式" : "列表模式";
+  if (isList) renderList();
+  else { refreshSiDetails().then(() => MapView.draw()); }
+}
+$("view-toggle").addEventListener("click", () => {
+  state.view = state.view === "list" ? "map" : "list";
+  applyView();
+});
+
+/* ================= 初始化 ================= */
+(function init() {
+  const saved = localStorage.getItem("nekotodo-theme");
+  applyTheme(saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  MapView.init();
+  state.api = getCookie("nekotodo_api");
+  state.token = getCookie("nekotodo_token");
+  $("login-api").value = state.api || location.origin;
+  if (state.api && state.token) startApp();
+  else openModal("login-mask");
+})();
+</script>
+</body>
+</html>
