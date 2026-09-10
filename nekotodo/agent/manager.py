@@ -68,14 +68,15 @@ def build_tool_specs() -> list[dict]:
         ),
         _tool(
             "update_task",
-            "修改一个已有任务(描述/状态/详情/截止日期/分类)。status 为 'incomplete' 或 'completed';details 用自由文本描述进度细节。",
+            "维护已有任务的进度或时间安排:可改 details(进度细节)、status('incomplete'/'completed')或 deadline(任务被推迟、赶工提前时)。不得修改任务的描述或分类。",
             {
                 "task_id": {"type": "integer", "description": "任务 id"},
-                "description": {"type": ["string", "null"], "description": "新的描述"},
                 "status": {"type": ["string", "null"], "description": "'incomplete' 或 'completed'"},
                 "details": {"type": ["string", "null"], "description": "进度细节,传 null 清空"},
-                "deadline": {"type": ["string", "null"], "description": "截止日期,传 null 清空"},
-                "category": {"type": ["string", "null"], "description": "分类键,传 null 清空"},
+                "deadline": {
+                    "type": ["string", "null"],
+                    "description": "截止日期,用户本地时间、不带时区偏移;传 null 清空",
+                },
             },
             ["task_id"],
         ),

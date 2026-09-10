@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import case
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,6 +103,94 @@ async def list_tasks(
     stmt = stmt.order_by(Task.priority)
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+def _clip(text: str, limit: int = 24) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+async def count_tasks_by_source_item(
+    session: AsyncSession, user_id: int, source_item_ids: list[int]
+) -> dict[int, int]:
+    """Map source_item_id -> task count, for annotating the item list."""
+    if not source_item_ids:
+        return {}
+    rows = await session.execute(
+        select(Task.source_item_id, func.count(Task.id))
+        .where(Task.user_id == user_id, Task.source_item_id.in_(source_item_ids))
+        .group_by(Task.source_item_id)
+    )
+    return {int(item_id): int(count) for item_id, count in rows}
+
+
+async def task_overview(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    per_category: int = 3,
+    max_chars: int = 800,
+) -> str:
+    """Compact digest of the user's existing tasks for the decomposition prompt.
+
+    Categories with per-status counts, plus a few sampled titles each. Samples
+    prefer incomplete tasks and then the most recently created ones. The output
+    is explicitly labelled as an excerpt so the model knows to fall back to
+    ``list_tasks`` for the authoritative list, rather than treating a category
+    with no sampled title as empty.
+    """
+    rows = await session.execute(
+        select(Task.category, Task.status, func.count(Task.id))
+        .where(Task.user_id == user_id)
+        .group_by(Task.category, Task.status)
+    )
+    counts: dict[str | None, dict[str, int]] = {}
+    for category, status, count in rows:
+        counts.setdefault(category, {})[status] = int(count)
+    if not counts:
+        return "(暂无已有任务)"
+
+    total = sum(sum(by_status.values()) for by_status in counts.values())
+    ordered = sorted(counts, key=lambda c: -sum(counts[c].values()))
+
+    header = (
+        f"共 {total} 项已有任务,{len(counts)} 个分类"
+        "(每类仅列节选标题,非全量;要准确清单请调用 list_tasks(category=...)):"
+    )
+    lines: list[str] = []
+    for category in ordered:
+        by_status = counts[category]
+        sample_stmt = select(Task.description).where(Task.user_id == user_id)
+        if category is None:
+            sample_stmt = sample_stmt.where(Task.category.is_(None))
+        else:
+            sample_stmt = sample_stmt.where(Task.category == category)
+        sample_rows = await session.execute(
+            sample_stmt.order_by(
+                case((Task.status == "incomplete", 0), else_=1),
+                Task.created_at.desc(),
+                Task.id.desc(),
+            ).limit(per_category + 1)
+        )
+        sample = [row[0] for row in sample_rows]
+        extra = len(sample) - per_category
+        titles = "; ".join(_clip(title) for title in sample[:per_category])
+        suffix = f" (+{extra})" if extra > 0 else ""
+        lines.append(
+            f"- {category or '未分类'} "
+            f"(未完成 {by_status.get('incomplete', 0)}/已完成 {by_status.get('completed', 0)}): "
+            f"{titles}{suffix}"
+        )
+
+    kept: list[str] = []
+    used = len(header)
+    for line in lines:
+        if used + len(line) + 1 > max_chars:
+            kept.append(f"(概览过长,已省略 {len(lines) - len(kept)} 个分类)")
+            break
+        kept.append(line)
+        used += len(line) + 1
+    return header + "\n" + "\n".join(kept)
 
 
 async def create_task(

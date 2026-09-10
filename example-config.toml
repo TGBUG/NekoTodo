@@ -40,7 +40,7 @@ timeout_seconds = 120
 
 [prompt]
 # 拆解系统提示词模板,支持占位符:
-#   {source_content} {source_items} {images} {current_time} {timezone}
+#   {source_info_id} {source_content} {source_items} {images} {task_overview} {current_time} {timezone}
 # 留空或省略则使用内置默认模板。
 # default_template = ""
 

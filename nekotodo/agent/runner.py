@@ -122,12 +122,17 @@ async def _execute_run(run_id: str) -> None:
         # Build the system prompt from the template via placeholders (no fallback).
         async with session_factory() as s:
             source_items = await tools.list_source_items(s, run.user_id, run.source_info_id)
+            item_task_counts = await tools.count_tasks_by_source_item(
+                s, run.user_id, [item.id for item in source_items]
+            )
+            task_overview = await tools.task_overview(s, run.user_id)
         images_block = "\n".join(
             f"- 图片(id {image.id}, 文件 {image.file_uuid}): {image.description or '(无描述)'}"
             for image in images
         ) or "(无图片)"
         source_items_block = "\n".join(
-            f"- [{item.id}] {item.content}" for item in source_items
+            f"- [{item.id}] {item.content}（已有任务 {item_task_counts.get(item.id, 0)} 个）"
+            for item in source_items
         ) or "(尚未切分条目)"
         context = {
             "source_info_id": str(source_info.id),
@@ -136,6 +141,7 @@ async def _execute_run(run_id: str) -> None:
             "source_content": source_info.content or "(无文本内容)",
             "source_items": source_items_block,
             "images": images_block,
+            "task_overview": task_overview,
         }
         system_prompt = build_system_prompt(
             settings.prompt.default_template, user.custom_prompt_template, context
@@ -185,17 +191,14 @@ async def _execute_run(run_id: str) -> None:
                 return json.dumps([tools.task_to_dict(t) for t in tasks], ensure_ascii=False)
 
         async def handler_update_task(args: dict) -> str:
+            # 维护时只能动 details/status/deadline;描述与分类不由拆解修改。
             kwargs = {}
-            if "description" in args:
-                kwargs["description"] = args["description"]
             if "status" in args:
                 kwargs["status"] = args["status"]
             if "details" in args:
                 kwargs["details"] = args["details"]
             if "deadline" in args:
                 kwargs["deadline"] = _parse_deadline(args["deadline"], tz)
-            if "category" in args:
-                kwargs["category"] = args["category"]
             async with session_factory() as s:
                 task = await tools.update_task(s, run.user_id, args["task_id"], **kwargs)
                 await s.commit()

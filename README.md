@@ -30,7 +30,7 @@ SourceItem ──0..1──► SourceImage                (条目经 source_imag
 1. 用户提交 `SourceInfo`(multipart:文本 `content` + 多张图片 `files`)
 2. 有图片时,**VLM 先把每张图预处理成文字描述**存入 `SourceImage.description`——主语言模型不直接看图,规避视觉模型文本能力弱的问题
 3. Agent 把源信息内容(文本 + 图片描述)切分为 `SourceItem`,需要时关联到 `SourceImage`
-4. 为每个**尚无任务**的条目生成 `Task`(只增不改,重拆不覆盖手动改动)
+4. 为每个**尚无任务**的条目生成 `Task`(只为缺任务的条目补任务,不改已有任务的描述与分类)
 5. 前端经 `source_item_id` / `source_image_id` 溯源:"这个待办来自哪条作业、哪张图"
 
 ## 技术栈
@@ -115,7 +115,7 @@ NEKOTODO_VLM__API_KEY=...
 NEKOTODO_REGISTRATION__TURNSTILE_SECRET_KEY=...
 ```
 
-提示词模板占位符:`{source_info_id}` 源信息 id / `{source_content}` 源信息文本 / `{source_items}` 已有条目 / `{images}` VLM 提取的图片描述 / `{current_time}` 当前用户本地时间 / `{timezone}` 用户时区。用户自定义模板可自由摆放;模板里没有的占位符数据不会注入(不自动追加)。
+提示词模板占位符:`{source_info_id}` 源信息 id / `{source_content}` 源信息文本 / `{source_items}` 已有条目(每条标注已有任务数) / `{images}` VLM 提取的图片描述 / `{task_overview}` 已有任务概览(各分类的完成/未完成计数 + 每类少量采样标题,拆解启动时生成) / `{current_time}` 当前用户本地时间 / `{timezone}` 用户时区。用户自定义模板可自由摆放;模板里没有的占位符数据不会注入(不自动追加)。
 
 ## 命令行工具
 
@@ -423,7 +423,7 @@ SourceInfo 对象:
 
 #### PATCH `/source-infos/{source_info_id}` — 修改内容并重新拆解(需鉴权)
 
-修改内容后**触发重新拆解**(只增不改:只为尚无任务的条目补任务),并返回新的 `run_id`。
+修改内容后**触发重新拆解**(只为尚无任务的条目补任务),并返回新的 `run_id`。
 
 请求体:
 
