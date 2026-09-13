@@ -5,6 +5,7 @@ import uuid as uuid_mod
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nekotodo import extraction
 from nekotodo import storage as storage_mod
 from nekotodo import tools
 from nekotodo.agent import runner
@@ -22,16 +23,38 @@ def _vlm_configured(settings: Settings) -> bool:
 
 async def _save_uploads(session: AsyncSession, user_id: int, source_info_id: int, files: list[UploadFile]) -> None:
     storage = storage_mod.get_storage()
-    for upload in files:
+    for order_index, upload in enumerate(files):
         data = await upload.read()
-        if storage_mod.detect_image_mime(data) is None:
+        if len(data) > extraction.MAX_FILE_BYTES:
             raise HTTPException(
                 status_code=400,
-                detail=f"unsupported file type: '{upload.filename}' (only images are supported)",
+                detail=f"file too large: '{upload.filename}' (max {extraction.MAX_FILE_BYTES // (1024 * 1024)}MB)",
+            )
+        detected = extraction.detect_kind(data, upload.filename or "")
+        if detected is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unsupported file type: '{upload.filename}'. {extraction.SUPPORTED_HINT}",
+            )
+        kind, mime = detected
+        if kind == "image" and not _vlm_configured(get_settings()):
+            raise HTTPException(
+                status_code=400,
+                detail="VLM is not configured; cannot process image files",
             )
         file_uuid = str(uuid_mod.uuid4())
         storage.save(user_id, file_uuid, data)
-        await tools.create_source_image(session, user_id, source_info_id, file_uuid, len(data))
+        await tools.create_source_file(
+            session,
+            user_id,
+            source_info_id,
+            file_uuid,
+            len(data),
+            kind=kind,
+            filename=upload.filename or "",
+            mime=mime,
+            order_index=order_index,
+        )
 
 
 @router.post("")
@@ -44,11 +67,6 @@ async def create_source_info(
     files = files or []
     if not (content or files):
         raise HTTPException(status_code=400, detail="content or at least one file is required")
-    if files and not _vlm_configured(get_settings()):
-        raise HTTPException(
-            status_code=400,
-            detail="VLM is not configured; cannot process image files",
-        )
     source_info = await tools.create_source_info(session, user.id, content or "")
     await _save_uploads(session, user.id, source_info.id, files)
     await session.flush()
@@ -75,13 +93,15 @@ async def get_source_info(
     if source_info is None:
         raise HTTPException(status_code=404, detail="source info not found")
     items = await tools.list_source_items(session, user.id, source_info_id)
-    tasks = await tools.list_tasks_for_source_info(session, user.id, source_info_id)
-    images = await tools.list_source_images(session, user.id, source_info_id)
+    tasks = await tools.list_tasks_for_source_info(
+        session, user.id, source_info_id, timezone=user.timezone
+    )
+    source_files = await tools.list_source_files(session, user.id, source_info_id)
     return {
         **tools.source_info_to_dict(source_info),
         "source_items": [tools.source_item_to_dict(item) for item in items],
         "tasks": [tools.task_to_dict(task) for task in tasks],
-        "source_images": [tools.source_image_to_dict(image) for image in images],
+        "source_files": [tools.source_file_to_dict(f) for f in source_files],
     }
 
 
@@ -116,7 +136,7 @@ async def delete_source_info(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    deleted = await tools.delete_source_info(session, user.id, source_info_id)
+    deleted = await tools.delete_source_info(session, user.id, source_info_id, timezone=user.timezone)
     if not deleted:
         raise HTTPException(status_code=404, detail="source info not found")
     await session.commit()

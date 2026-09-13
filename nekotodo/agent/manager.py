@@ -35,11 +35,15 @@ def build_tool_specs() -> list[dict]:
     return [
         _tool(
             "create_task",
-            "新建一个可执行任务。priority 省略时追加到列表末尾;给出时插入到该位置(1 为最顶)。",
+            "新建一个可执行任务。priority 省略时追加到同一截止日组的末尾;给出时插入到该组内的该位置(1 为组内最前)。",
             {
                 "description": {"type": "string", "description": "任务描述"},
+                "details": {"type": ["string", "null"], "description": "任务细节(补充说明、要求等)"},
                 "deadline": deadline_prop,
-                "priority": {"type": ["integer", "null"], "description": "位置 1..N"},
+                "priority": {
+                    "type": ["integer", "null"],
+                    "description": "同一截止日组内位次 1..k",
+                },
                 "category": category_prop,
                 "source_item_id": {"type": ["integer", "null"], "description": "来源条目 id"},
             },
@@ -47,10 +51,11 @@ def build_tool_specs() -> list[dict]:
         ),
         _tool(
             "insert_task",
-            "在指定位置插入一个新任务(priority 必填,1 为最顶)。",
+            "在指定位置插入一个新任务(priority 必填,指同一截止日组内的位次,1 为最前)。",
             {
                 "description": {"type": "string", "description": "任务描述"},
-                "priority": {"type": "integer", "description": "插入位置 1..N"},
+                "details": {"type": ["string", "null"], "description": "任务细节(补充说明、要求等)"},
+                "priority": {"type": "integer", "description": "同一截止日组内位次 1..k"},
                 "deadline": deadline_prop,
                 "category": category_prop,
                 "source_item_id": {"type": ["integer", "null"], "description": "来源条目 id"},
@@ -68,11 +73,11 @@ def build_tool_specs() -> list[dict]:
         ),
         _tool(
             "update_task",
-            "维护已有任务的进度或时间安排:可改 details(进度细节)、status('incomplete'/'completed')或 deadline(任务被推迟、赶工提前时)。不得修改任务的描述或分类。",
+            "维护已有任务的细节或时间安排:可改 details(任务细节)、status('incomplete'/'completed')或 deadline(任务被推迟、赶工提前时)。不得修改任务的描述或分类。",
             {
                 "task_id": {"type": "integer", "description": "任务 id"},
                 "status": {"type": ["string", "null"], "description": "'incomplete' 或 'completed'"},
-                "details": {"type": ["string", "null"], "description": "进度细节,传 null 清空"},
+                "details": {"type": ["string", "null"], "description": "任务细节,传 null 清空"},
                 "deadline": {
                     "type": ["string", "null"],
                     "description": "截止日期,用户本地时间、不带时区偏移;传 null 清空",
@@ -82,22 +87,22 @@ def build_tool_specs() -> list[dict]:
         ),
         _tool(
             "move_task",
-            "把任务移动到指定位置(1 为最顶),用于调整紧急度顺序。",
+            "把任务移动到同一截止日组内的指定位置(1 为组内最前),用于调整同一天到期任务的先后。",
             {
                 "task_id": {"type": "integer", "description": "任务 id"},
-                "to_position": {"type": "integer", "description": "目标位置 1..N"},
+                "to_position": {"type": "integer", "description": "同一截止日组内目标位次 1..k"},
             },
             ["task_id", "to_position"],
         ),
         _tool(
             "create_source_item",
-            "把源信息内容切分为一个来源条目。文本源信息每条独立内容一个条目;内容中的要求/截止等约束不要切成条目。若条目来源于某张图片,填 source_image_id。",
+            "把源信息内容切分为一个来源条目。文本源信息每条独立内容一个条目;内容中的要求/截止等约束不要切成条目。若条目来源于某张图片,填 source_file_id。",
             {
                 "source_info_id": {"type": "integer", "description": "源信息 id"},
                 "content": {"type": "string", "description": "该条目的内容"},
-                "source_image_id": {
+                "source_file_id": {
                     "type": ["integer", "null"],
-                    "description": "来源图片 id(若条目来自某张图片)",
+                    "description": "来源文件 id(若条目来自某张图片)",
                 },
             },
             ["source_info_id", "content"],
@@ -107,6 +112,16 @@ def build_tool_specs() -> list[dict]:
             "查看该源信息已有的来源条目。",
             {"source_info_id": {"type": "integer", "description": "源信息 id"}},
             ["source_info_id"],
+        ),
+        _tool(
+            "read_source_file",
+            "读取某个上传文档的正文(按字符偏移分页)。{files} 里只有每个文件的预览;需要看完整内容时用本工具继续读。",
+            {
+                "source_file_id": {"type": "integer", "description": "文件 id(见 {files} 摘要)"},
+                "offset": {"type": ["integer", "null"], "description": "起始字符偏移,默认 0"},
+                "limit": {"type": ["integer", "null"], "description": "读取字符数,默认 4000"},
+            },
+            ["source_file_id"],
         ),
     ]
 

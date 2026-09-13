@@ -80,7 +80,7 @@ class SourceInfo(Base):
     source_items: Mapped[list["SourceItem"]] = relationship(
         back_populates="source_info", cascade="all, delete-orphan"
     )
-    source_images: Mapped[list["SourceImage"]] = relationship(
+    source_files: Mapped[list["SourceFile"]] = relationship(
         back_populates="source_info", cascade="all, delete-orphan"
     )
 
@@ -94,18 +94,26 @@ class SourceItem(Base):
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     content: Mapped[str] = mapped_column(Text)
-    source_image_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("source_images.id", ondelete="SET NULL"), nullable=True, index=True
+    source_file_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("source_files.id", ondelete="SET NULL"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     source_info: Mapped["SourceInfo"] = relationship(back_populates="source_items")
-    source_image: Mapped[Optional["SourceImage"]] = relationship(back_populates="source_items")
+    source_file: Mapped[Optional["SourceFile"]] = relationship(back_populates="source_items")
     tasks: Mapped[list["Task"]] = relationship(back_populates="source_item")
 
 
-class SourceImage(Base):
-    __tablename__ = "source_images"
+class SourceFile(Base):
+    """A file attached to a SourceInfo: an image, or a document.
+
+    Images are described by the VLM into ``description``. Documents are extracted
+    into an ordered digest in ``extracted_text`` (image references inline);
+    images embedded in a document become their own SourceFile rows of kind
+    ``image``, so ordering and provenance survive into the frontend.
+    """
+
+    __tablename__ = "source_files"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_info_id: Mapped[int] = mapped_column(
@@ -113,12 +121,17 @@ class SourceImage(Base):
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     file_uuid: Mapped[str] = mapped_column(String(36), unique=True)
+    kind: Mapped[str] = mapped_column(String(16), default="image")
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    mime: Mapped[str] = mapped_column(String(128), default="")
     size: Mapped[int] = mapped_column(Integer, default=0)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
+    extracted_text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    source_info: Mapped["SourceInfo"] = relationship(back_populates="source_images")
-    source_items: Mapped[list["SourceItem"]] = relationship(back_populates="source_image")
+    source_info: Mapped["SourceInfo"] = relationship(back_populates="source_files")
+    source_items: Mapped[list["SourceItem"]] = relationship(back_populates="source_file")
 
 
 class DecompositionRun(Base):

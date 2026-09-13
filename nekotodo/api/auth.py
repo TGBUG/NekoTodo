@@ -59,6 +59,20 @@ async def register(
     return {"token": await _issue_token(account)}
 
 
+@router.get("/registration")
+async def registration_config():
+    """公开的注册能力说明,供登录窗口动态显示(无需鉴权)。
+
+    只暴露 site key(它本就是给前端渲染用的公开值);secret 永不下发。
+    """
+    registration = get_settings().registration
+    return {
+        "allow_public": registration.allow_public,
+        "require_turnstile": registration.require_turnstile,
+        "turnstile_site_key": registration.turnstile_site_key if registration.require_turnstile else "",
+    }
+
+
 @router.post("/login")
 async def login(payload: LoginRequest, session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(Account).where(Account.username == payload.username))

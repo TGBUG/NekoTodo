@@ -25,6 +25,7 @@ async def list_tasks(
         category=category,
         source_item_id=source_item_id,
         completed_only=completed,
+        timezone=user.timezone,
     )
     return [tools.task_to_dict(task) for task in tasks]
 
@@ -43,6 +44,7 @@ async def create_task(
             deadline=tools.parse_deadline(payload.deadline),
             priority=payload.priority,
             category=payload.category,
+            timezone=user.timezone,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -73,7 +75,7 @@ async def update_task(
     if "deadline" in kwargs:
         kwargs["deadline"] = tools.parse_deadline(kwargs["deadline"])
     try:
-        task = await tools.update_task(session, user.id, task_id, **kwargs)
+        task = await tools.update_task(session, user.id, task_id, timezone=user.timezone, **kwargs)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if task is None:
@@ -88,7 +90,7 @@ async def delete_task(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    deleted = await tools.delete_task(session, user.id, task_id)
+    deleted = await tools.delete_task(session, user.id, task_id, timezone=user.timezone)
     if not deleted:
         raise HTTPException(status_code=404, detail="task not found")
     await session.commit()
@@ -102,7 +104,9 @@ async def move_task(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    task = await tools.move_task(session, user.id, task_id, payload.to_position)
+    task = await tools.move_task(
+        session, user.id, task_id, payload.to_position, timezone=user.timezone
+    )
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
     await session.commit()

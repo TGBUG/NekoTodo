@@ -235,6 +235,10 @@ textarea { resize: vertical; }
 .si-images img {
   width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border);
 }
+.si-file {
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 12px; color: var(--muted); align-self: center;
+}
 .si-item { font-size: 13px; padding: 6px 10px; background: var(--bg); border-radius: 8px; }
 
 /* ---------- 右键菜单 ---------- */
@@ -314,6 +318,10 @@ textarea { resize: vertical; }
       <div class="field"><label>后端地址</label><input id="login-api" placeholder="http://127.0.0.1:8000"></div>
       <div class="field"><label>用户名</label><input id="login-username" autocomplete="username"></div>
       <div class="field"><label>密码</label><input id="login-password" type="password" autocomplete="current-password"></div>
+      <div class="field hidden" id="turnstile-field">
+        <label>人机验证</label>
+        <div id="turnstile-box"></div>
+      </div>
       <div class="err-msg" id="login-error"></div>
     </div>
     <div class="modal-footer">
@@ -330,8 +338,8 @@ textarea { resize: vertical; }
     <div class="modal-body">
       <textarea id="ai-content" rows="6" placeholder="粘贴作业清单 / 任务描述,要求(截止时间、分类等)直接写在内容里…"></textarea>
       <div class="field">
-        <label>图片(可选,多张)</label>
-        <input type="file" id="ai-files" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
+        <label>文件(图片/文档,可选,多张)</label>
+        <input type="file" id="ai-files" accept="image/png,image/jpeg,image/webp,image/gif,.docx,.pptx,.pdf,.txt,.md,.csv,.json" multiple>
       </div>
       <div class="err-msg" id="ai-error"></div>
     </div>
@@ -364,7 +372,7 @@ textarea { resize: vertical; }
         <input id="task-category" list="category-datalist" placeholder="选择已有分类或输入新分类">
         <datalist id="category-datalist"></datalist>
       </div>
-      <div class="field"><label>details(进度细节)</label><textarea id="task-details" rows="2"></textarea></div>
+      <div class="field"><label>任务细节</label><textarea id="task-details" rows="2"></textarea></div>
       <div class="err-msg" id="task-error"></div>
     </div>
     <div class="modal-footer">
@@ -644,6 +652,78 @@ $("btn-theme").addEventListener("click", () =>
 
 /* ================= 登录 / 注册 ================= */
 let loginMode = "login";
+// 注册能力探测结果,按后端地址缓存;null = 未知(旧版后端/地址不可达)→ 照常提交,由服务端裁决
+let regInfo = null;
+let regInfoFor = null;
+let turnstileWidgetId = null;
+
+function persistApiAddress() {
+  const apiUrl = $("login-api").value.trim();
+  if (apiUrl) setCookie("nekotodo_api", apiUrl);
+}
+async function ensureRegInfo() {
+  const apiUrl = $("login-api").value.trim();
+  if (!apiUrl) return;
+  if (regInfo && regInfoFor === apiUrl) return;
+  try {
+    const res = await fetch(apiUrl.replace(/\/$/, "") + "/auth/registration");
+    if (!res.ok) throw new Error(String(res.status));
+    regInfo = await res.json();
+    regInfoFor = apiUrl;
+  } catch {
+    // 探测失败(旧版后端/地址不对/无网络)不提示错误:照常发起注册,让服务端给出真实原因
+    regInfo = null;
+    regInfoFor = null;
+  }
+}
+function needTurnstile() {
+  return loginMode === "register" && !!(regInfo && regInfo.allow_public && regInfo.require_turnstile);
+}
+function applyRegisterState() {
+  const blocked = loginMode === "register" && !!regInfo && regInfo.allow_public === false;
+  $("login-submit").classList.toggle("hidden", blocked);
+  $("turnstile-field").classList.toggle("hidden", !needTurnstile());
+  if (blocked) $("login-error").textContent = "本服务器未开放公开注册,请联系管理员";
+}
+function loadTurnstileScript() {
+  return new Promise((resolve, reject) => {
+    if (window.turnstile) return resolve();
+    const existing = document.getElementById("turnstile-script");
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("人机验证脚本加载失败")));
+      return;
+    }
+    const script = document.createElement("script");
+    script.id = "turnstile-script";
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    script.async = true; script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("人机验证脚本加载失败(检查网络或域名白名单)"));
+    document.head.appendChild(script);
+  });
+}
+async function renderTurnstile() {
+  if (!needTurnstile()) { $("turnstile-field").classList.add("hidden"); return; }
+  $("turnstile-field").classList.remove("hidden");
+  if (turnstileWidgetId !== null) return;
+  const sitekey = regInfo.turnstile_site_key;
+  if (!sitekey) { $("login-error").textContent = "服务器要求人机验证但未下发 site key"; return; }
+  try {
+    await loadTurnstileScript();
+    turnstileWidgetId = window.turnstile.render($("turnstile-box"), { sitekey });
+  } catch (e) {
+    $("login-error").textContent = e.message;
+  }
+}
+function resetTurnstile() {
+  if (turnstileWidgetId !== null && window.turnstile) window.turnstile.reset(turnstileWidgetId);
+}
+function turnstileToken() {
+  if (turnstileWidgetId === null || !window.turnstile) return "";
+  return window.turnstile.getResponse(turnstileWidgetId) || "";
+}
+
 function setLoginMode(mode) {
   loginMode = mode;
   $("tab-login").classList.toggle("active", mode === "login");
@@ -651,11 +731,23 @@ function setLoginMode(mode) {
   $("login-title").textContent = mode === "login" ? "登录 NekoTodo" : "注册 NekoTodo";
   $("login-submit").textContent = mode === "login" ? "登录" : "注册";
   $("login-error").textContent = "";
+  applyRegisterState();
+  if (mode === "register") enterRegisterMode();
+}
+// 进入注册模式时探测一次:不支持则提示,需要验证则先把组件渲染好(避免首次提交必然失败)
+async function enterRegisterMode() {
+  await ensureRegInfo();
+  applyRegisterState();
+  renderTurnstile();
 }
 $("tab-login").addEventListener("click", () => setLoginMode("login"));
 $("tab-register").addEventListener("click", () => setLoginMode("register"));
 $("login-submit").addEventListener("click", submitLogin);
 $("login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") submitLogin(); });
+$("login-api").addEventListener("change", () => {
+  regInfo = null; regInfoFor = null;   // 换地址后重新探测
+  persistApiAddress();
+});
 
 async function submitLogin() {
   const apiUrl = $("login-api").value.trim();
@@ -663,10 +755,20 @@ async function submitLogin() {
   const password = $("login-password").value;
   $("login-error").textContent = "";
   if (!apiUrl || !username || !password) { $("login-error").textContent = "请填写完整"; return; }
+  if (loginMode === "register" && regInfo && regInfo.allow_public === false) {
+    $("login-error").textContent = "本服务器未开放公开注册,请联系管理员";
+    return;
+  }
+  const body = { username, password };
+  if (needTurnstile()) {
+    const token = turnstileToken();
+    if (!token) { $("login-error").textContent = "请先完成人机验证"; return; }
+    body.turnstile_token = token;
+  }
   state.api = apiUrl; state.token = "";
   try {
     const res = await api(loginMode === "login" ? "/auth/login" : "/auth/register",
-      { method: "POST", body: { username, password } });
+      { method: "POST", body });
     setCookie("nekotodo_api", apiUrl);
     setCookie("nekotodo_token", res.token);
     state.token = res.token;
@@ -675,6 +777,15 @@ async function submitLogin() {
   } catch (e) {
     if (loginMode === "register" && e.status === 403) $("login-error").textContent = "该服务器未开放公开注册,请联系管理员";
     else if (loginMode === "register" && e.status === 409) $("login-error").textContent = "用户名已存在";
+    else if (loginMode === "register" && e.status === 400 && /turnstile/i.test(e.message || "")) {
+      // 探测未拿到结果(比如瞬时网络问题)但服务端确实要求验证:重探一次并渲染组件,让用户重试
+      regInfo = null; regInfoFor = null;
+      await ensureRegInfo();
+      applyRegisterState();
+      renderTurnstile();
+      if (needTurnstile()) { resetTurnstile(); $("login-error").textContent = "请先完成人机验证"; }
+      else $("login-error").textContent = e.message || "注册失败";
+    }
     else if (e.status === 401) $("login-error").textContent = "用户名或密码错误";
     else $("login-error").textContent = e.message || "连接失败";
   }
@@ -727,6 +838,21 @@ function visibleTasks() {
 function isOverdue(t) {
   return t.status !== "completed" && t.deadline && parseUTC(t.deadline) < new Date();
 }
+// 排序:截止日(用户时区)为主;无截止的排最后;同一天内按组内 priority
+function dayKey(t) {
+  if (!t.deadline) return "9999-99-99";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz(), year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(parseUTC(t.deadline)).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+function sameDayGroup(a, b) { return dayKey(a) === dayKey(b); }
+function deadlineComparator(a, b) {
+  const ka = dayKey(a), kb = dayKey(b);
+  if (ka !== kb) return ka < kb ? -1 : 1;
+  return a.priority - b.priority;
+}
+function sortByDeadline(tasks) { return tasks.slice().sort(deadlineComparator); }
 function taskCard(t) {
   const el = document.createElement("div");
   el.className = "task-card" + (t.status === "completed" ? " done" : "");
@@ -760,8 +886,15 @@ function taskCard(t) {
   return el;
 }
 async function moveTask(dragId, beforeId) {
-  const rest = state.tasks.filter((x) => x.id !== dragId).sort((a, b) => a.priority - b.priority);
-  const idx = rest.findIndex((x) => x.id === beforeId);
+  const dragged = state.tasks.find((x) => x.id === dragId);
+  const target = state.tasks.find((x) => x.id === beforeId);
+  if (!dragged || !target) return;
+  if (!sameDayGroup(dragged, target)) {
+    toast("只能在同一截止日内调整顺序(改截止日期请用右键编辑)", "error");
+    return;
+  }
+  const group = sortByDeadline(state.tasks).filter((x) => sameDayGroup(x, target) && x.id !== dragId);
+  const idx = group.findIndex((x) => x.id === beforeId);
   if (idx < 0) return;
   try {
     await api(`/tasks/${dragId}/move`, { method: "POST", body: { to_position: idx + 1 } });
@@ -772,7 +905,7 @@ let completedCollapsed = localStorage.getItem("nekotodo-completed-collapsed") ==
 function renderList() {
   const view = $("list-view");
   view.innerHTML = "";
-  const tasks = visibleTasks().slice().sort((a, b) => a.priority - b.priority);
+  const tasks = sortByDeadline(visibleTasks());
   const incomplete = tasks.filter((t) => t.status !== "completed");
   const completed = tasks.filter((t) => t.status === "completed");
 
@@ -788,12 +921,13 @@ function renderList() {
     if (e.target !== incWrap) return;
     e.preventDefault();
     const dragId = +e.dataTransfer.getData("text/plain");
-    const rest = state.tasks.filter((x) => x.id !== dragId).sort((a, b) => a.priority - b.priority);
-    const lastInc = incomplete.filter((x) => x.id !== dragId).pop();
-    if (!lastInc) return;
-    const idx = rest.findIndex((x) => x.id === lastInc.id);
+    const dragged = state.tasks.find((x) => x.id === dragId);
+    if (!dragged) return;
+    // 落到组末尾:只在拖拽任务自己的截止日组内移动
+    const group = sortByDeadline(state.tasks).filter((x) => sameDayGroup(x, dragged) && x.id !== dragId);
+    if (!group.length) return;
     try {
-      await api(`/tasks/${dragId}/move`, { method: "POST", body: { to_position: idx + 2 } });
+      await api(`/tasks/${dragId}/move`, { method: "POST", body: { to_position: group.length + 1 } });
       refreshAll();
     } catch (err) { toast(err.message, "error"); }
   });
@@ -1057,7 +1191,8 @@ function runSearch() {
       if (to && d > wallToUTC(to + "T23:59", tz())) return false;
     }
     return true;
-  }).sort((a, b) => a.priority - b.priority);
+  });
+  results.sort(deadlineComparator);
   const box = $("search-results");
   box.innerHTML = "";
   if (!results.length) { box.innerHTML = `<div class="empty-hint">无匹配结果</div>`; return; }
@@ -1086,13 +1221,22 @@ async function openSourceModal(id) {
   $("source-error").textContent = "";
   const imgWrap = $("source-images");
   imgWrap.innerHTML = "";
-  $("source-images-wrap").style.display = d.source_images.length ? "" : "none";
-  for (const img of d.source_images) {
-    const el = document.createElement("img");
-    el.alt = img.description || "";
-    el.title = img.description || "";
-    loadImageURL(img.file_uuid).then((url) => { if (url) el.src = url; });
-    imgWrap.appendChild(el);
+  const files = d.source_files || [];
+  $("source-images-wrap").style.display = files.length ? "" : "none";
+  for (const file of files) {
+    if (file.kind === "image") {
+      const el = document.createElement("img");
+      el.alt = file.description || file.filename || "";
+      el.title = file.description || file.filename || "";
+      loadImageURL(file.file_uuid).then((url) => { if (url) el.src = url; });
+      imgWrap.appendChild(el);
+    } else {
+      const el = document.createElement("div");
+      el.className = "si-file";
+      el.textContent = `${file.filename || "文档"} · ${file.text_chars} 字符`;
+      el.title = file.description || "";
+      imgWrap.appendChild(el);
+    }
   }
   const items = $("source-items");
   items.innerHTML = d.source_items.length
@@ -1225,8 +1369,11 @@ const MapView = {
       items.forEach((it, j) => {
         const a = (j / Math.max(1, items.length)) * Math.PI * 2 - Math.PI / 2;
         const ix = cx + Math.cos(a) * r1, iy = cy + Math.sin(a) * r1;
-        const isImg = it.source_image_id != null;
-        const img = isImg ? (d.source_images || []).find((g) => g.id === it.source_image_id) : null;
+        const file = it.source_file_id != null
+          ? (d.source_files || []).find((g) => g.id === it.source_file_id)
+          : null;
+        const img = file && file.kind === "image" ? file : null;
+        const isImg = img !== null;
         const node = {
           kind: "item", id: it.id, x: ix, y: iy, r: isImg ? 38 : 18,
           label: it.content.slice(0, 10), fullLabel: it.content,

@@ -13,20 +13,20 @@ The data-owning entity behind an Account: owns Tasks, SourceInfos, and User Pref
 _Avoid_: person, profile
 
 **Task**:
-A single executable todo item — the unit of work a user tracks. Has a description, a status (`incomplete` | `completed`), optional free-text details describing finer progress (e.g. "已背前 3 段"), an optional ISO 8601 deadline, and a Priority. A Task may optionally carry a Category; a generated Task always carries a Source, a manually added Task may have none.
+A single executable todo item — the unit of work a user tracks. Has a description, a status (`incomplete` | `completed`), optional free-text details holding any extra task details (requirement notes, "已背前 3 段", etc.), an optional ISO 8601 deadline, and a Priority. A Task may optionally carry a Category; a generated Task always carries a Source, a manually added Task may have none.
 _Avoid_: Todo, item, progress (as a numeric 0–100 scale)
 
 **SourceInfo**:
-The raw source information a user submits to the Agent in a single submission — e.g. a homework list handed down by a superior. Requirements (deadlines, categorization preferences) are embedded in its content, not stored separately. Persisted as a first-class entity, holding one or more SourceItems and zero or more SourceImages.
+The raw source information a user submits to the Agent in a single submission — e.g. a homework list handed down by a superior. Requirements (deadlines, categorization preferences) are embedded in its content, not stored separately. Persisted as a first-class entity, holding one or more SourceItems and zero or more SourceFiles.
 _Avoid_: Assignment, source info (as a one-off), task list, 作业清单 (when meaning SourceInfo)
 
 **SourceItem**:
-An entry within a SourceInfo. For text content, one item per entry. Tasks are generated from SourceItems. A SourceItem may reference a SourceImage (`source_image_id`) when it was derived from an image.
+An entry within a SourceInfo. For text content, one item per entry. Tasks are generated from SourceItems. A SourceItem may reference a SourceFile (`source_file_id`) when it was derived from an image.
 _Avoid_: source entry, line item
 
-**SourceImage**:
-An image uploaded with a SourceInfo, stored on disk under a UUID. The VLM preprocesses it into a text description (stored on the SourceImage) before the Agent decomposes; the language model never sees the raw image.
-_Avoid_: attachment, 图片 (when meaning SourceImage), content_type (not stored — real type is sniffed from bytes)
+**SourceFile**:
+A file attached to a SourceInfo, stored on disk under a UUID. Its `kind` is either `image` (the VLM preprocesses it into `description`; the language model never sees the raw image) or `document` (extracted into an ordered digest in `extracted_text`, with images embedded in the document becoming SourceFiles of kind `image` and referenced inline as `[图片 id …]`). Extraction is cached: re-running a decomposition never re-extracts. Support is deliberately narrow — images, `.docx`, `.pptx`, `.pdf`, and plain text; legacy binary `.doc`/`.ppt`/`.xls` are rejected.
+_Avoid_: attachment, 图片 (when meaning any SourceFile), content_type (the `mime` is stored, but detection falls back to sniffing magic bytes)
 
 **Source**:
 The relationship from a Task back to the SourceItem it was decomposed from. A single SourceItem may yield many Tasks, so the relationship is many-to-one. Optional — manually added Tasks have no Source.
@@ -37,11 +37,11 @@ A single free-form string key a user assigns to a Task for grouping (e.g. `工�
 _Avoid_: tag, label, list
 
 **Priority**:
-A Task's position in the user's ordered task list. 1 is the top (most urgent); the maximum is the current total number of the user's Tasks. Positions are contiguous — no gaps, no ties — so inserting, moving, or deleting a Task shifts the others. The Agent may reorder Tasks to express urgency.
-_Avoid_: urgency level, rank, priority score
+A Task's position *within its deadline-day group* — the set of the user's Tasks sharing the same local due date; undated Tasks form their own group, ordered last. 1 is the top of the group, and positions are contiguous within a group, so inserting, moving, or deleting a Task shifts the others in that group only. Deadline is the primary ordering key and Priority exists to break ties between Tasks due on the same day; the Agent may reorder Tasks to express same-day urgency.
+_Avoid_: urgency level, rank, priority score, global position
 
 **Deadline**:
-A Task's optional due timestamp, stored as ISO 8601 in UTC. Its meaning is relative to the user's local clock, so it is interpreted through the user's Timezone. Overdue is derived, not stored: `deadline < now` while the Task is incomplete.
+A Task's optional due timestamp, stored as ISO 8601 in UTC, and the primary key for ordering task lists. Its meaning is relative to the user's local clock, so it is interpreted through the user's Timezone; the ordering day is the local calendar day. Overdue is derived, not stored: `deadline < now` while the Task is incomplete.
 _Avoid_: due date (when meaning an instant), DDL
 
 **Timezone**:
