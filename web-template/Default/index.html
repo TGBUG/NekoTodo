@@ -795,16 +795,25 @@ async function startApp() {
 
 /* ================= 侧栏 / 列表 ================= */
 function categories() {
-  const set = new Map();
-  for (const t of state.tasks) if (t.category) set.set(t.category, (set.get(t.category) || 0) + 1);
-  return [...set.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh-CN"));
+  // 返回 [分类, 未完成任务数];只要有任务就列出该分类(全部已完成时显示 0)
+  const counts = new Map();
+  for (const t of state.tasks) {
+    if (!t.category) continue;
+    const entry = counts.get(t.category) || { total: 0, incomplete: 0 };
+    entry.total += 1;
+    if (t.status !== "completed") entry.incomplete += 1;
+    counts.set(t.category, entry);
+  }
+  return [...counts.entries()]
+    .map(([name, entry]) => [name, entry.incomplete])
+    .sort((a, b) => a[0].localeCompare(b[0], "zh-CN"));
 }
 function renderSidebar() {
   const list = $("category-list");
   list.innerHTML = "";
   const all = document.createElement("div");
   all.className = "cat-item" + (state.category === "All" ? " active" : "");
-  all.innerHTML = `<span>全部</span><span class="n">${state.tasks.length}</span>`;
+  all.innerHTML = `<span>全部</span><span class="n">${state.tasks.filter((t) => t.status !== "completed").length}</span>`;
   all.addEventListener("click", () => { state.category = "All"; renderSidebar(); renderList(); });
   list.appendChild(all);
   for (const [c, n] of categories()) {
