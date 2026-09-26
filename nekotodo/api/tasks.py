@@ -41,6 +41,7 @@ async def create_task(
             session,
             user.id,
             payload.description,
+            details=payload.details,
             deadline=tools.parse_deadline(payload.deadline),
             priority=payload.priority,
             category=payload.category,

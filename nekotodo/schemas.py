@@ -30,6 +30,7 @@ class PreferencesUpdate(BaseModel):
 
 class TaskCreate(BaseModel):
     description: str = Field(min_length=1)
+    details: str | None = None
     deadline: str | None = None
     priority: int | None = None
     category: str | None = None

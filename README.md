@@ -323,6 +323,7 @@ Task 对象:
 ```json
 {
   "description": "买牛奶",        // 必填
+  "details": "顺路取快递",         // 选填,任务细节
   "deadline": "2026-08-10T00:00:00Z",  // 选填,UTC ISO 8601
   "priority": 1,                 // 选填,同一截止日组内位次;缺省追加到该组末尾
   "category": "生活"              // 选填
