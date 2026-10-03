@@ -85,8 +85,11 @@ NEKOTODO_CONFIG=config.toml uvicorn nekotodo.app:app
 
 ### 5. 使用前端
 
-目前提供了两个简易的单HTML文件前端，后续开发Android应用等
-（图像素材来源于网络，如侵犯了您的权益请联系删除）
+[[Web]](https://github.com/TGBUG/NekoTodo-Web)
+
+[[Android]](https://github.com/TGBUG/NekoTodo-Android)
+
+*你也可以根据下面的文档编写自己的前端实现*
 
 ## 配置说明
 
